@@ -1,5 +1,5 @@
 Google Big Query Technical Add-on
-Written by Justin Lai <jlai@woolworths.com.au> and Brett Adams <brett.adams@global.ntt>
+Written by Justin Lai and Brett Adams
 
 Queries Google Big Query and indexes the result.
 
