@@ -1,0 +1,40 @@
+name: build
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: 3.7
+      - name: Get version
+        id: addon_version
+        run: |
+          VERSION=$(cat package/default/app.conf | grep -e ^version | awk '{print $3}')
+          echo "::set-output name=VERSION::$VERSION"
+      - name: Get addon name
+        id: addon_name
+        run: |
+          ADDON_NAME=$(cat package/default/app.conf | grep -e ^id | awk '{print $3}')
+          echo "::set-output name=ADDON_NAME::$ADDON_NAME"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade splunk-packaging-toolkit splunk-add-on-ucc-framework
+      - name: Building app
+        run: |
+          ucc-gen --ta-version ${{ steps.addon_version.outputs.VERSION }}
+      - name: Packaging app
+        run: |
+          mkdir dist
+          slim package output/${{ steps.addon_name.outputs.ADDON_NAME }} -o dist/
+      - uses: actions/upload-artifact@v2
+        with:
+          name: ${{ steps.addon_name.outputs.ADDON_NAME }}-${{ steps.addon_version.outputs.VERSION }}.tar.gz
+          path: dist/${{ steps.addon_name.outputs.ADDON_NAME }}-${{ steps.addon_version.outputs.VERSION }}.tar.gz
