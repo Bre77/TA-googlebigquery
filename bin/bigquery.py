@@ -2,14 +2,10 @@ import os
 import sys
 import json
 import time
-from datetime import date, timedelta, datetime, timezone
 import base64
-from decimal import Decimal
-import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from splunklib.modularinput import *
-import requests
 from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
 from google.api_core.exceptions import BadRequest
@@ -44,9 +40,6 @@ def fix_types(inputval):
     else:
         raise Exception ("Encountered unexpected type: {typename}".format(typename=inputval_type)) 
 
-#def timestamp_to_epoch(ts):
-#    # This helper function converts a timezone-aware datetime object to a float representing the number of seconds since the UNIX epoch to 3 decimal places
-#    return float("%.3f" % (((ts - (datetime(1970,1,1).replace(tzinfo=timezone.utc))) / timedelta(milliseconds=1)) / 1000))   
 
 def integer_to_epoch(ts):
     while(ts > 9999999999):
