@@ -4,7 +4,7 @@ Written by Justin Lai and Brett Adams
 
 Queries Google Big Query and indexes the result.
 
-Python dependancies included
+Python dependencies included
 
 https://splunkbase.splunk.com/app/5692/
 
