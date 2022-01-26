@@ -1,0 +1,13 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    uses: artemrys/workflow-splunk-addon/.github/workflows/reusable-build-release.yaml@v0.0.4
