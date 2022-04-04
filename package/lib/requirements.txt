@@ -1,3 +1,3 @@
-splunk-sdk==1.6.18
+splunk-sdk==1.6.19
 google-cloud-bigquery==2.34.2
 google-auth==2.6.2
