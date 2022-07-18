@@ -1,0 +1,3 @@
+splunk-sdk
+google-cloud-bigquery
+google-auth
