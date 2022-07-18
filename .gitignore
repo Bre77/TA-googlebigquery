@@ -3,4 +3,5 @@ local.meta
 __pycache__
 *.pyc
 .vscode
-output/
+lib/
+!lib/requirements.txt
