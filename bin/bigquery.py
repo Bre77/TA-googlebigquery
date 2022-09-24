@@ -106,9 +106,9 @@ class Input(Script):
         )
         scheme.add_argument(
             Argument(
-                name="checkpoint_start_value",
+                name="checkpoint_start",
                 title="Checkpoint start value",
-                description="Defaults to 0 if not set. If you want to start sync from a certain point or use a TIMESTAMP type field you can set a different value here, for example 1970-01-01 00:00:00 UTC",
+                description="Start sync from a certain point or use a TIMESTAMP type field you can set a different value here, for example 1970-01-01 00:00:00 UTC",
                 data_type=Argument.data_type_string,
                 required_on_create=False,
             )
@@ -140,7 +140,7 @@ class Input(Script):
         query = input_items["query"]
         time_field = input_items.get("time_field")
         checkpoint_field = input_items.get("checkpoint_field")
-        checkpoint_start_value = input_items.get("checkpoint_start_value") or "0"
+        checkpoint_start = input_items.get("checkpoint_start","0")
         blacklist = (input_items.get("blacklist") or "").split(",")
 
         # Password Encryption
@@ -175,7 +175,7 @@ class Input(Script):
                 with open(checkpointfile, "r") as file:
                     checkpoint_value = file.read()
             except FileNotFoundError:
-                checkpoint_value = checkpoint_start_value
+                checkpoint_value = checkpoint_start
             query = query.replace("%checkpoint%", checkpoint_value)
 
         # Do the Query
