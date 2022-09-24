@@ -30,15 +30,13 @@ The field to use as the timestamp. The TIMESTAMP data type is recommended, but a
 
 ### Checkpoint Field
 
-The field whose largest value will be used as the `%checkpoint%` in the next search. The initial value is 0 and will be compared using `max()`, so you should to convert TIMESTAMP fields to a number using UNIX_MICROS and use that for checkpoints.
+The field whose largest value will be used as the `%checkpoint%` in the next search. The previous value will be saved in a file and compared with the current value using `max()` after being converted to string, so you can use any field type which is either a number or lexicographically comparable like TIMESTAMP.
 
-You can do this with a subquery such as:
+### Checkpoint start value
 
-```sql
-SELECT * FROM (
-    SELECT UNIX_MICROS(timestamp_column) as timestamp_column_micros, * FROM `table`
-) WHERE timestamp_column_micros > %checkpoint% 
-```
+The default initial value is 0 which works if you use a Unix time field and want to sync the whole table, but if you want to use TIMESTAMP you need to set a starting value which is compatible, for example `1970-01-01 00:00:00 UTC`.
+
+It's also useful if you don't want to sync the entire table and start from a specific value or date.
 
 ### Field Blacklist
 
