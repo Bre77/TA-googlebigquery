@@ -59,6 +59,14 @@ Checkpoint Field: `event_info.timestamp_usec`
 
 Field Blacklist: `time`
 
+```sql
+SELECT * FROM `bigquery-public-data.pypi.file_downloads` WHERE file.project = 'splunk-sdk' AND timestamp >= '%checkpoint%'
+```
+
+Time Field: `timestamp`
+
+Checkpoint Field: `timestamp`
+
 ## Troubleshooting
 
 If you're not getting any data show up in the index (especially when using checkpoints), have a look at the logs in your Splunk instance with this search:
