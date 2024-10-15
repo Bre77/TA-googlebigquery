@@ -181,7 +181,14 @@ class Input(Script):
         # Do the Query
         service_account = json.loads(input_items["service_account"])
         project_id = service_account["project_id"]
-        credentials = Credentials.from_service_account_info(service_account)
+        credentials = Credentials.from_service_account_info(
+            service_account,
+            scopes=[
+                'https://www.googleapis.com/auth/cloud-platform',            
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/bigquery"
+            ]
+        )
 
         ew.log(EventWriter.INFO, f'stanza="{name}" query="{query}"')
         try:
