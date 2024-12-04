@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from splunklib.modularinput import Argument, Event, EventWriter, Script, Scheme
 from google.cloud import bigquery
 from google.oauth2.service_account import Credentials
-from google.api_core.exceptions import BadRequest
+from google.cloud.exceptions import BadRequest
 
 
 def fix_types(inputval):

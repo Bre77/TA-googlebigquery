@@ -1,1 +1,4 @@
 splunk-sdk
+google-cloud-bigquery
+google-auth
+google-cloud-core
