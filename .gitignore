@@ -3,5 +3,4 @@ local.meta
 __pycache__
 *.pyc
 .vscode
-lib/
-!lib/requirements.txt
+lib/splunklib
