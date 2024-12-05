@@ -1,6 +1,6 @@
 {
     "name": "TA-googlebigquery",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "splunkbaseid": 5692,
     "license": "https://cdn.splunkbase.splunk.com/static/misc/eula.html"
 }
