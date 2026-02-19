@@ -195,7 +195,8 @@ class Input(Script):
 
         query_epoch = time.time()
         try:
-            query_job = client.query(query)
+            job_config = bigquery.QueryJobConfig(allow_large_results=True)
+            query_job = client.query(query, job_config=job_config)
             results = query_job.result()
         except BadRequest as br:
             ew.log(
