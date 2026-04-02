@@ -1,14 +1,14 @@
+import base64
+import json
 import os
 import sys
-import json
 import time
-import base64
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
-from splunklib.modularinput import Argument, Event, EventWriter, Script, Scheme
 from google.cloud import bigquery
-from google.oauth2.service_account import Credentials
 from google.cloud.exceptions import BadRequest
+from google.oauth2.service_account import Credentials
+from splunklib.modularinput import Argument, Event, EventWriter, Scheme, Script
 
 
 def fix_types(inputval):
@@ -60,7 +60,6 @@ class Input(Script):
     APP = __file__.split(os.sep)[-3]
 
     def get_scheme(self):
-
         scheme = Scheme("Google BigQuery")
         scheme.description = (
             "Executes a query against Google BigQuery and loads each row as an event"
@@ -140,7 +139,7 @@ class Input(Script):
         query = input_items["query"]
         time_field = input_items.get("time_field")
         checkpoint_field = input_items.get("checkpoint_field")
-        checkpoint_start = input_items.get("checkpoint_start","0")
+        checkpoint_start = input_items.get("checkpoint_start", "0")
         blacklist = (input_items.get("blacklist") or "").split(",")
 
         # Password Encryption
