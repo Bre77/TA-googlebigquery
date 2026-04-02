@@ -4,6 +4,11 @@ import os
 import sys
 import time
 
+# This add-on vendors older generated protobuf modules that are incompatible
+# with newer protobuf C extensions bundled in some Splunk Python runtimes.
+# Force the pure-Python implementation before importing any google packages.
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from google.cloud import bigquery
 from google.cloud.exceptions import BadRequest
