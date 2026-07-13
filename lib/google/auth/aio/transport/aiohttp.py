@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Transport adapter for Asynchronous HTTP Requests based on aiohttp."""
+"""Transport adapter for Asynchronous HTTP Requests based on aiohttp.
+"""
 
 import asyncio
 import logging
-from typing import AsyncGenerator, Mapping, Optional, TYPE_CHECKING, Union
+from typing import AsyncGenerator, Mapping, Optional
 
 try:
     import aiohttp  # type: ignore
@@ -29,15 +30,6 @@ from google.auth import _helpers
 from google.auth import exceptions
 from google.auth.aio import _helpers as _helpers_async
 from google.auth.aio import transport
-
-if TYPE_CHECKING:  # pragma: NO COVER
-    from aiohttp import ClientTimeout  # type: ignore
-
-else:
-    try:
-        from aiohttp import ClientTimeout
-    except (ImportError, AttributeError):
-        ClientTimeout = None
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,7 +113,7 @@ class Request(transport.Request):
     .. automethod:: __call__
     """
 
-    def __init__(self, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, session: aiohttp.ClientSession = None):
         self._session = session
         self._closed = False
 
@@ -131,7 +123,7 @@ class Request(transport.Request):
         method: str = "GET",
         body: Optional[bytes] = None,
         headers: Optional[Mapping[str, str]] = None,
-        timeout: Union[float, ClientTimeout] = transport._DEFAULT_TIMEOUT_SECONDS,
+        timeout: float = transport._DEFAULT_TIMEOUT_SECONDS,
         **kwargs,
     ) -> transport.Response:
         """
@@ -166,10 +158,7 @@ class Request(transport.Request):
             if not self._session:
                 self._session = aiohttp.ClientSession()
 
-            if isinstance(timeout, aiohttp.ClientTimeout):
-                client_timeout = timeout
-            else:
-                client_timeout = aiohttp.ClientTimeout(total=timeout)
+            client_timeout = aiohttp.ClientTimeout(total=timeout)
             _helpers.request_log(_LOGGER, method, url, body, headers)
             response = await self._session.request(
                 method,
@@ -187,12 +176,8 @@ class Request(transport.Request):
             raise client_exc from caught_exc
 
         except asyncio.TimeoutError as caught_exc:
-            if isinstance(timeout, aiohttp.ClientTimeout):
-                timeout_seconds = timeout.total
-            else:
-                timeout_seconds = timeout
             timeout_exc = exceptions.TimeoutError(
-                f"Request timed out after {timeout_seconds} seconds."
+                f"Request timed out after {timeout} seconds."
             )
             raise timeout_exc from caught_exc
 

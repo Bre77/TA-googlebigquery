@@ -77,9 +77,9 @@ index="_internal" bigquery source="*/splunkd.log"
 
 ## Binary File Declaration
 
-* `lib/_cffi_backend.cpython-39-x86_64-linux-gnu.so`
-* `lib/_cffi_backend.cpython-313-x86_64-linux-gnu.so`
-* `lib/cryptography/hazmat/bindings/_rust.abi3.so`
-
-These are x86_64-only: `cryptography` (needed for service-account JWT signing) and its
-`cffi` dependency have no pure-Python fallback, unlike the rest of the vendored stack.
+None. `lib/` is pure Python - `google-auth` is capped below the version where
+`cryptography` became a hard dependency (see `lib/requirements.txt`), so service-account
+JWT signing uses google-auth's pure-Python `rsa`/`pyasn1` signer instead, and `.build.sh`
+deletes every other native speedup in the vendored stack (charset-normalizer, protobuf's
+upb, google-crc32c) since each has a pure-Python fallback. This keeps the add-on
+architecture-agnostic (x86_64, AArch64, etc.) with a single vendored `lib/`.

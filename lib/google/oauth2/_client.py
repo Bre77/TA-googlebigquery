@@ -26,7 +26,6 @@ For more information about the token endpoint, see
 import datetime
 import http.client as http_client
 import json
-import logging
 import urllib
 
 from google.auth import _exponential_backoff
@@ -37,13 +36,10 @@ from google.auth import jwt
 from google.auth import metrics
 from google.auth import transport
 
-_LOGGER = logging.getLogger(__name__)
-
 _URLENCODED_CONTENT_TYPE = "application/x-www-form-urlencoded"
 _JSON_CONTENT_TYPE = "application/json"
 _JWT_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 _REFRESH_GRANT_TYPE = "refresh_token"
-_BLOCKING_REGIONAL_ACCESS_BOUNDARY_LOOKUP_TIMEOUT = 3
 
 
 def _handle_error_response(response_data, retryable_error):
@@ -372,7 +368,7 @@ def call_iam_generate_id_token_endpoint(
         raise new_exc from caught_exc
 
     payload = jwt.decode(id_token, verify=False)
-    expiry = _helpers.utcfromtimestamp(payload["exp"])
+    expiry = datetime.datetime.utcfromtimestamp(payload["exp"])
 
     return id_token, expiry
 
@@ -424,7 +420,7 @@ def id_token_jwt_grant(request, token_uri, assertion, can_retry=True):
         raise new_exc from caught_exc
 
     payload = jwt.decode(id_token, verify=False)
-    expiry = _helpers.utcfromtimestamp(payload["exp"])
+    expiry = datetime.datetime.utcfromtimestamp(payload["exp"])
 
     return id_token, expiry, response_data
 
@@ -518,19 +514,18 @@ def refresh_grant(
     return _handle_refresh_grant_response(response_data, refresh_token)
 
 
-def _lookup_regional_access_boundary(request, url, headers=None, fail_fast=False):
-    """Implements the global lookup of a credential Regional Access Boundary.
+def _lookup_trust_boundary(request, url, headers=None):
+    """Implements the global lookup of a credential trust boundary.
     For the lookup, we send a request to the global lookup endpoint and then
     parse the response. Service account credentials, workload identity
-    pools and workforce pools implementation may have Regional Access Boundaries configured.
+    pools and workforce pools implementation may have trust boundaries configured.
     Args:
         request (google.auth.transport.Request): A callable used to make
             HTTP requests.
-        url (str): The Regional Access Boundary lookup url.
+        url (str): The trust boundary lookup url.
         headers (Optional[Mapping[str, str]]): The headers for the request.
-        fail_fast (bool): Whether the lookup should fail fast (uses a short timeout and no retries).
     Returns:
-        Optional[Mapping[str,list|str]]: A dictionary containing
+        Mapping[str,list|str]: A dictionary containing
             "locations" as a list of allowed locations as strings and
             "encodedLocations" as a hex string.
             e.g:
@@ -540,70 +535,63 @@ def _lookup_regional_access_boundary(request, url, headers=None, fail_fast=False
                 ],
                 "encodedLocations": "0xA30"
             }
+            If the credential is not set up with explicit trust boundaries, a trust boundary
+            of "all" will be returned as a default response.
+            {
+                "locations": [],
+                "encodedLocations": "0x0"
+            }
+    Raises:
+        exceptions.RefreshError: If the response status code is not 200.
+        exceptions.MalformedError: If the response is not in a valid format.
     """
 
-    response_data = _lookup_regional_access_boundary_request(
-        request, url, headers=headers, fail_fast=fail_fast
-    )
-    if response_data is None:
-        # Error was already logged by _lookup_regional_access_boundary_request
-        return None
-
+    response_data = _lookup_trust_boundary_request(request, url, headers=headers)
+    # In case of no-op response, the "locations" list may or may not be present as an empty list.
     if "encodedLocations" not in response_data:
-        _LOGGER.error(
-            "Regional Access Boundary response malformed: missing 'encodedLocations' key in %s",
-            response_data,
+        raise exceptions.MalformedError(
+            "Invalid trust boundary info: {}".format(response_data)
         )
-        return None
     return response_data
 
 
-def _lookup_regional_access_boundary_request(
-    request, url, can_retry=True, headers=None, fail_fast=False
-):
-    """Makes a request to the Regional Access Boundary lookup endpoint.
+def _lookup_trust_boundary_request(request, url, can_retry=True, headers=None):
+    """Makes a request to the trust boundary lookup endpoint.
 
     Args:
         request (google.auth.transport.Request): A callable used to make
             HTTP requests.
-        url (str): The Regional Access Boundary lookup url.
+        url (str): The trust boundary lookup url.
         can_retry (bool): Enable or disable request retry behavior. Defaults to true.
         headers (Optional[Mapping[str, str]]): The headers for the request.
-        fail_fast (bool): Whether the lookup should fail fast (uses a short timeout and no retries).
 
     Returns:
-        Optional[Mapping[str, str]]: The JSON-decoded response data on success, or None on failure.
+        Mapping[str, str]: The JSON-decoded response data.
+
+    Raises:
+        google.auth.exceptions.RefreshError: If the token endpoint returned
+            an error.
     """
     (
         response_status_ok,
         response_data,
         retryable_error,
-    ) = _lookup_regional_access_boundary_request_no_throw(
-        request, url, can_retry=can_retry, headers=headers, fail_fast=fail_fast
-    )
+    ) = _lookup_trust_boundary_request_no_throw(request, url, can_retry, headers)
     if not response_status_ok:
-        _LOGGER.warning(
-            "Regional Access Boundary HTTP request failed after retries: response_data=%s, retryable_error=%s",
-            response_data,
-            retryable_error,
-        )
-        return None
+        _handle_error_response(response_data, retryable_error)
     return response_data
 
 
-def _lookup_regional_access_boundary_request_no_throw(
-    request, url, can_retry=True, headers=None, fail_fast=False
-):
-    """Makes a request to the Regional Access Boundary lookup endpoint. This
+def _lookup_trust_boundary_request_no_throw(request, url, can_retry=True, headers=None):
+    """Makes a request to the trust boundary lookup endpoint. This
         function doesn't throw on response errors.
 
     Args:
         request (google.auth.transport.Request): A callable used to make
             HTTP requests.
-        url (str): The Regional Access Boundary lookup url.
+        url (str): The trust boundary lookup url.
         can_retry (bool): Enable or disable request retry behavior. Defaults to true.
         headers (Optional[Mapping[str, str]]): The headers for the request.
-        fail_fast (bool): Whether the lookup should fail fast (uses a short timeout and no retries).
 
     Returns:
         Tuple(bool, Mapping[str, str], Optional[bool]): A boolean indicating
@@ -615,12 +603,9 @@ def _lookup_regional_access_boundary_request_no_throw(
     response_data = {}
     retryable_error = False
 
-    timeout = _BLOCKING_REGIONAL_ACCESS_BOUNDARY_LOOKUP_TIMEOUT if fail_fast else None
-    total_attempts = 1 if fail_fast else 6
-    retries = _exponential_backoff.ExponentialBackoff(total_attempts=total_attempts)
-
+    retries = _exponential_backoff.ExponentialBackoff()
     for _ in retries:
-        response = request(method="GET", url=url, headers=headers, timeout=timeout)
+        response = request(method="GET", url=url, headers=headers)
         response_body = (
             response.data.decode("utf-8")
             if hasattr(response.data, "decode")
@@ -639,9 +624,6 @@ def _lookup_regional_access_boundary_request_no_throw(
         retryable_error = _can_retry(
             status_code=response.status, response_data=response_data
         )
-        # Add 502 (Bad Gateway) as a retryable error for RAB lookups.
-        if response.status == http_client.BAD_GATEWAY:
-            retryable_error = True
 
         if not can_retry or not retryable_error:
             return False, response_data, retryable_error

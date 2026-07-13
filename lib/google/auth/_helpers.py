@@ -21,6 +21,7 @@ from email.message import Message
 import hashlib
 import json
 import logging
+import os
 import sys
 from typing import Any, Dict, Mapping, Optional, Union
 import urllib
@@ -121,26 +122,6 @@ def utcnow():
     now = datetime.datetime.now(datetime.timezone.utc)
     now = now.replace(tzinfo=None)
     return now
-
-
-def utcfromtimestamp(timestamp):
-    """Returns the UTC datetime from a timestamp.
-
-    Args:
-        timestamp (float): The timestamp to convert.
-
-    Returns:
-        datetime: The time in UTC.
-    """
-    # We used datetime.utcfromtimestamp() before, since it's deprecated from
-    # python 3.12, we are using datetime.fromtimestamp(timestamp, timezone.utc)
-    # now. "utcfromtimestamp()" is offset-native (no timezone info), but
-    # "fromtimestamp(timestamp, timezone.utc)" is offset-aware (with timezone
-    # info). This will cause datetime comparison problem. For backward
-    # compatibility, we need to remove the timezone info.
-    dt = datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
-    dt = dt.replace(tzinfo=None)
-    return dt
 
 
 def datetime_to_secs(value):
@@ -305,6 +286,46 @@ def unpadded_urlsafe_b64encode(value):
         Union[str|bytes]: The encoded value
     """
     return base64.urlsafe_b64encode(value).rstrip(b"=")
+
+
+def get_bool_from_env(variable_name, default=False):
+    """Gets a boolean value from an environment variable.
+
+    The environment variable is interpreted as a boolean with the following
+    (case-insensitive) rules:
+    - "true", "1" are considered true.
+    - "false", "0" are considered false.
+    Any other values will raise an exception.
+
+    Args:
+        variable_name (str): The name of the environment variable.
+        default (bool): The default value if the environment variable is not
+            set.
+
+    Returns:
+        bool: The boolean value of the environment variable.
+
+    Raises:
+        google.auth.exceptions.InvalidValue: If the environment variable is
+            set to a value that can not be interpreted as a boolean.
+    """
+    value = os.environ.get(variable_name)
+
+    if value is None:
+        return default
+
+    value = value.lower()
+
+    if value in ("true", "1"):
+        return True
+    elif value in ("false", "0"):
+        return False
+    else:
+        raise exceptions.InvalidValue(
+            'Environment variable "{}" must be one of "true", "false", "1", or "0".'.format(
+                variable_name
+            )
+        )
 
 
 def is_python_3():

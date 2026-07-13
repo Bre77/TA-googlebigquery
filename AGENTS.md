@@ -13,24 +13,32 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   (a hard, non-optional extra as of 3.x), but `bin/bigquery.py` only ever calls the REST query
   path (`client.query().result()`), never bqstorage/grpc - proved by running a real query with
   `grpcio`/`grpcio-status` fully uninstalled. `.build.sh` deletes `lib/grpc*` after install.
-- **`cryptography` + `cffi` are the one unavoidable native dependency.** Modern `google-auth`'s
-  service-account JWT signing (`Credentials.from_service_account_info`) unconditionally routes
-  through `cryptography`'s compiled backend - no pure-Python path exists in that call, and `cffi`'s
-  compiled backend has no fallback either (confirmed by deleting each and hitting ImportError).
-  Every other native speedup (charset-normalizer, protobuf's upb, google-crc32c) has a working
-  pure-Python fallback and is deleted post-install in `.build.sh` to avoid arch-specific `.so` files.
-- **Dual-Python (3.9/3.13) trick:** `cryptography`'s compiled extension is abi3 (`_rust.abi3.so`),
-  one build serves both interpreters. `cffi`'s is NOT abi3 - it's built per-CPython-minor, so
-  `.build.sh` additionally downloads the cp313 wheel and vendors its `_cffi_backend*.so` alongside
-  pip's cp39 build; the two coexist under different filenames and Python's loader picks the one
-  matching its own ABI tag. Verified end-to-end (import + live query) on both 3.9 and 3.13.
-- **Known unresolved gap: AArch64.** `cryptography`'s abi3 `.so` has the *same* filename in the
-  x86_64 and aarch64 wheels, so - unlike the cp39/cp313 case - there's no side-by-side vendoring
-  trick for architecture; Linux has no fat-binary mechanism. A build on an x86_64 host fails
-  `splunk-appinspect`'s `check_aarch64_compatibility` (verified directly, not theoretical) on
-  `cffi`'s and `cryptography`'s `.so` files. This blocks a Splunk Cloud/aarch64 AppInspect badge,
-  not general Enterprise installability. See PR discussion for the options considered (ship
-  x86_64-only vs. a runtime arch-dispatch shim vs. an older pre-cryptography-mandate google-auth).
+- **`lib/` is pure Python - no `cryptography`/`cffi`, by deliberate choice.** Modern
+  `google-auth` (>=2.48) made `cryptography` a hard, unconditional dependency for
+  service-account JWT signing, and `cryptography` needs `cffi`'s compiled backend too -
+  neither has a pure-Python fallback in that line. `google-auth` 2.46.0/2.47.0 are the last
+  versions where `crypt/rsa.py` still guards the `cryptography` import in a try/except and
+  falls back to the pure-Python `rsa`/`pyasn1`/`pyasn1_modules` signer
+  (`google.auth.crypt._python_rsa`) with **no code changes needed** in `bin/bigquery.py` -
+  `Credentials.from_service_account_info()` picks it up automatically once `cryptography`
+  isn't installed. `lib/requirements.txt` pins `google-auth>=2.46.0,<2.48` for exactly this
+  reason - do not let it float to 2.48+ without re-deciding this trade-off. Verified: the
+  signer really is `google.auth.crypt._python_rsa.RSASigner` at runtime, and a real
+  service-account-signed request reaches BigQuery successfully.
+- **Why not native multi-arch (tried first).** The captain's first instinct was to keep
+  `cryptography`+`cffi` and ship both x86_64 and aarch64 builds side by side in
+  arch-specific directories (avoiding the identical-filename collision that blocks putting
+  both in the same directory). Built a real test package this way and ran
+  `splunk-appinspect`'s `check_aarch64_compatibility` against it: **it still fails**, because
+  that check scans every file in the package independently and flags any non-ARM binary
+  regardless of directory or whether an ARM sibling exists elsewhere - there is no
+  Splunk-recognized directory convention that exempts one architecture's binary because
+  another one is also present. Splunk's own `linux_x86_64`/`darwin_x86_64`/etc. per-arch
+  `bin/` directory convention (`splunk_appinspect/app.py`'s `arch_bin_dirs`) predates ARM
+  and has no aarch64 bucket either. Confirmed empirically with a throwaway test package run
+  through `splunk-appinspect`, not just inferred from reading the check's source. Native
+  multi-arch is only genuinely achievable via separate per-architecture Splunkbase package
+  uploads, a materially larger change (doubled CI/release surface) than this task's scope.
 - `setuptools` is NOT a dependency - nothing in the modern stack imports `pkg_resources`/
   `setuptools` (verified by grep + a clean import with both entirely absent). Adding it back
   drags in setuptools's own vendored test suite and Windows launcher `.exe` files, which is most

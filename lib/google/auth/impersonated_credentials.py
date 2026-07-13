@@ -30,9 +30,6 @@ import copy
 from datetime import datetime
 import http.client as http_client
 import json
-import logging
-from typing import Optional, TYPE_CHECKING
-
 
 from google.auth import _exponential_backoff
 from google.auth import _helpers
@@ -43,17 +40,15 @@ from google.auth import jwt
 from google.auth import metrics
 from google.oauth2 import _client
 
-if TYPE_CHECKING:  # pragma: NO COVER
-    import google.auth.transport
-
-_LOGGER = logging.getLogger(__name__)
 
 _REFRESH_ERROR = "Unable to acquire impersonated credentials"
 
 _DEFAULT_TOKEN_LIFETIME_SECS = 3600  # 1 hour in seconds
 
 _GOOGLE_OAUTH2_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
-
+_TRUST_BOUNDARY_LOOKUP_ENDPOINT = (
+    "https://iamcredentials.{}/v1/projects/-/serviceAccounts/{}/allowedLocations"
+)
 
 _SOURCE_CREDENTIAL_AUTHORIZED_USER_TYPE = "authorized_user"
 _SOURCE_CREDENTIAL_SERVICE_ACCOUNT_TYPE = "service_account"
@@ -128,7 +123,7 @@ class Credentials(
     credentials.Scoped,
     credentials.CredentialsWithQuotaProject,
     credentials.Signing,
-    credentials.CredentialsWithRegionalAccessBoundary,
+    credentials.CredentialsWithTrustBoundary,
 ):
     """This module defines impersonated credentials which are essentially
     impersonated identities.
@@ -272,7 +267,6 @@ class Credentials(
         self._quota_project_id = quota_project_id
         self._iam_endpoint_override = iam_endpoint_override
         self._cred_file_path = None
-
         self._trust_boundary = trust_boundary
 
     def _metric_header_for_usage(self):
@@ -350,26 +344,26 @@ class Credentials(
             iam_endpoint_override=self._iam_endpoint_override,
         )
 
-    def _build_regional_access_boundary_lookup_url(
-        self, request: "Optional[google.auth.transport.Request]" = None  # noqa: F821
-    ):
-        """Builds and returns the URL for the Regional Access Boundary lookup API.
+    def _build_trust_boundary_lookup_url(self):
+        """Builds and returns the URL for the trust boundary lookup API.
 
         This method constructs the specific URL for the IAM Credentials API's
         `allowedLocations` endpoint, using the credential's universe domain
         and service account email.
 
+        Raises:
+            ValueError: If `self.service_account_email` is None or an empty
+                string, as it's required to form the URL.
+
         Returns:
-            Optional[str]: The URL for the Regional Access Boundary lookup endpoint, or None
-                 if the service account email is missing.
+            str: The URL for the trust boundary lookup endpoint.
         """
         if not self.service_account_email:
-            _LOGGER.error(
-                "Service account email is required to build the Regional Access Boundary lookup URL for impersonated credentials."
+            raise ValueError(
+                "Service account email is required to build the trust boundary lookup URL."
             )
-            return None
-        return iam._SERVICE_ACCOUNT_REGIONAL_ACCESS_BOUNDARY_LOOKUP_ENDPOINT.format(
-            service_account_email=self.service_account_email
+        return _TRUST_BOUNDARY_LOOKUP_ENDPOINT.format(
+            self.universe_domain, self.service_account_email
         )
 
     def sign_bytes(self, message):
@@ -444,7 +438,12 @@ class Credentials(
             trust_boundary=self._trust_boundary,
         )
         cred._cred_file_path = self._cred_file_path
-        self._copy_regional_access_boundary_manager(cred)
+        return cred
+
+    @_helpers.copy_docstring(credentials.CredentialsWithTrustBoundary)
+    def with_trust_boundary(self, trust_boundary):
+        cred = self._make_copy()
+        cred._trust_boundary = trust_boundary
         return cred
 
     @_helpers.copy_docstring(credentials.CredentialsWithQuotaProject)
@@ -650,7 +649,7 @@ class IDTokenCredentials(credentials.CredentialsWithQuotaProject):
             raise new_exc from caught_exc
 
         self.token = id_token
-        self.expiry = _helpers.utcfromtimestamp(
+        self.expiry = datetime.utcfromtimestamp(
             jwt.decode(id_token, verify=False)["exp"]
         )
 

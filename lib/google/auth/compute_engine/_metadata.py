@@ -97,22 +97,9 @@ _METADATA_HEADERS = {_METADATA_FLAVOR_HEADER: _METADATA_FLAVOR_VALUE}
 # Timeout in seconds to wait for the GCE metadata server when detecting the
 # GCE environment.
 try:
-    _METADATA_DEFAULT_TIMEOUT = int(os.getenv(environment_vars.GCE_METADATA_TIMEOUT, 3))
+    _METADATA_DEFAULT_TIMEOUT = int(os.getenv("GCE_METADATA_TIMEOUT", 3))
 except ValueError:  # pragma: NO COVER
     _METADATA_DEFAULT_TIMEOUT = 3
-
-# The number of tries to perform when waiting for the GCE metadata server
-# when detecting the GCE environment.
-try:
-    _METADATA_DETECT_RETRIES = int(
-        os.getenv(environment_vars.GCE_METADATA_DETECT_RETRIES, 3)
-    )
-except ValueError:  # pragma: NO COVER
-    _METADATA_DETECT_RETRIES = 3
-
-# This is used to disable checking for the GCE metadata server and directly
-# assuming it's not available.
-_NO_GCE_CHECK = os.getenv(environment_vars.NO_GCE_CHECK) == "true"
 
 # Detect GCE Residency
 _GOOGLE = "Google"
@@ -129,9 +116,6 @@ def is_on_gce(request):
     Returns:
         bool: True if the code runs on Google Compute Engine, False otherwise.
     """
-    if _NO_GCE_CHECK:
-        return False
-
     if ping(request):
         return True
 
@@ -166,15 +150,16 @@ def _prepare_request_for_mds(request, use_mtls=False) -> None:
 
     Args:
         request (google.auth.transport.Request): A callable used to make
-            HTTP requests. If mTLS is enabled, and the request supports sessions,
-            the request will have the mTLS adapter mounted. Otherwise, there
-            will be no change.
+            HTTP requests.
         use_mtls (bool): Whether to use mTLS for the request.
 
-
+    Returns:
+        google.auth.transport.Request: A request object to use.
+            If mTLS is enabled, the request will have the mTLS adapter mounted.
+            Otherwise, the original request will be returned unchanged.
     """
-    # Only modify the request if mTLS is enabled, and request supports sessions.
-    if use_mtls and hasattr(request, "session"):
+    # Only modify the request if mTLS is enabled.
+    if use_mtls:
         # Ensure the request has a session to mount the adapter to.
         if not request.session:
             request.session = requests.Session()
@@ -185,9 +170,7 @@ def _prepare_request_for_mds(request, use_mtls=False) -> None:
             request.session.mount(f"https://{host}/", adapter)
 
 
-def ping(
-    request, timeout=_METADATA_DEFAULT_TIMEOUT, retry_count=_METADATA_DETECT_RETRIES
-):
+def ping(request, timeout=_METADATA_DEFAULT_TIMEOUT, retry_count=3):
     """Checks to see if the metadata server is available.
 
     Args:
