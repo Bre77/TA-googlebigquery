@@ -14,6 +14,9 @@
 
 """Classes for copy jobs."""
 
+import typing
+from typing import Optional
+
 from google.cloud.bigquery.encryption_configuration import EncryptionConfiguration
 from google.cloud.bigquery import _helpers
 from google.cloud.bigquery.table import TableReference
@@ -21,6 +24,28 @@ from google.cloud.bigquery.table import TableReference
 from google.cloud.bigquery.job.base import _AsyncJob
 from google.cloud.bigquery.job.base import _JobConfig
 from google.cloud.bigquery.job.base import _JobReference
+
+
+class OperationType:
+    """Different operation types supported in table copy job.
+
+    https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#operationtype
+    """
+
+    OPERATION_TYPE_UNSPECIFIED = "OPERATION_TYPE_UNSPECIFIED"
+    """Unspecified operation type."""
+
+    COPY = "COPY"
+    """The source and destination table have the same table type."""
+
+    SNAPSHOT = "SNAPSHOT"
+    """The source table type is TABLE and the destination table type is SNAPSHOT."""
+
+    CLONE = "CLONE"
+    """The source table type is TABLE and the destination table type is CLONE."""
+
+    RESTORE = "RESTORE"
+    """The source table type is SNAPSHOT and the destination table type is TABLE."""
 
 
 class CopyJobConfig(_JobConfig):
@@ -31,7 +56,7 @@ class CopyJobConfig(_JobConfig):
     the property name as the name of a keyword argument.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super(CopyJobConfig, self).__init__("copy", **kwargs)
 
     @property
@@ -85,6 +110,37 @@ class CopyJobConfig(_JobConfig):
             api_repr = value.to_api_repr()
         self._set_sub_prop("destinationEncryptionConfiguration", api_repr)
 
+    @property
+    def operation_type(self) -> str:
+        """The operation to perform with this copy job.
+
+        See
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#JobConfigurationTableCopy.FIELDS.operation_type
+        """
+        return self._get_sub_prop(
+            "operationType", OperationType.OPERATION_TYPE_UNSPECIFIED
+        )
+
+    @operation_type.setter
+    def operation_type(self, value: Optional[str]):
+        if value is None:
+            value = OperationType.OPERATION_TYPE_UNSPECIFIED
+        self._set_sub_prop("operationType", value)
+
+    @property
+    def destination_expiration_time(self) -> str:
+        """google.cloud.bigquery.job.DestinationExpirationTime: The time when the
+        destination table expires. Expired tables will be deleted and their storage reclaimed.
+
+        See
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#JobConfigurationTableCopy.FIELDS.destination_expiration_time
+        """
+        return self._get_sub_prop("destinationExpirationTime")
+
+    @destination_expiration_time.setter
+    def destination_expiration_time(self, value: str):
+        self._set_sub_prop("destinationExpirationTime", value)
+
 
 class CopyJob(_AsyncJob):
     """Asynchronous job: copy data into a table from other tables.
@@ -105,15 +161,13 @@ class CopyJob(_AsyncJob):
     """
 
     _JOB_TYPE = "copy"
+    _CONFIG_CLASS = CopyJobConfig
 
     def __init__(self, job_id, sources, destination, client, job_config=None):
         super(CopyJob, self).__init__(job_id, client)
 
-        if not job_config:
-            job_config = CopyJobConfig()
-
-        self._configuration = job_config
-        self._properties["configuration"] = job_config._properties
+        if job_config is not None:
+            self._properties["configuration"] = job_config._properties
 
         if destination:
             _helpers._set_sub_prop(
@@ -129,6 +183,11 @@ class CopyJob(_AsyncJob):
                 ["configuration", "copy", "sourceTables"],
                 source_resources,
             )
+
+    @property
+    def configuration(self) -> CopyJobConfig:
+        """The configuration for this copy job."""
+        return typing.cast(CopyJobConfig, super().configuration)
 
     @property
     def destination(self):
@@ -168,14 +227,14 @@ class CopyJob(_AsyncJob):
         """See
         :attr:`google.cloud.bigquery.job.CopyJobConfig.create_disposition`.
         """
-        return self._configuration.create_disposition
+        return self.configuration.create_disposition
 
     @property
     def write_disposition(self):
         """See
         :attr:`google.cloud.bigquery.job.CopyJobConfig.write_disposition`.
         """
-        return self._configuration.write_disposition
+        return self.configuration.write_disposition
 
     @property
     def destination_encryption_configuration(self):
@@ -188,7 +247,7 @@ class CopyJob(_AsyncJob):
         See
         :attr:`google.cloud.bigquery.job.CopyJobConfig.destination_encryption_configuration`.
         """
-        return self._configuration.destination_encryption_configuration
+        return self.configuration.destination_encryption_configuration
 
     def to_api_repr(self):
         """Generate a resource for :meth:`_begin`."""
@@ -202,7 +261,7 @@ class CopyJob(_AsyncJob):
     def from_api_repr(cls, resource, client):
         """Factory: construct a job given its API representation
 
-        .. note:
+        .. note::
 
            This method assumes that the project found in the resource matches
            the client's project.

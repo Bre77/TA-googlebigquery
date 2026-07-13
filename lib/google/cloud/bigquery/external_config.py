@@ -18,15 +18,21 @@
    Job.configuration.query.tableDefinitions.
 """
 
-from __future__ import absolute_import
+from __future__ import absolute_import, annotations
 
 import base64
 import copy
+import typing
+from typing import Any, Dict, FrozenSet, Iterable, Optional, Union
 
 from google.cloud.bigquery._helpers import _to_bytes
 from google.cloud.bigquery._helpers import _bytes_to_json
 from google.cloud.bigquery._helpers import _int_or_none
 from google.cloud.bigquery._helpers import _str_or_none
+from google.cloud.bigquery import _helpers
+from google.cloud.bigquery.enums import SourceColumnMatch
+from google.cloud.bigquery.format_options import AvroOptions, ParquetOptions
+from google.cloud.bigquery import schema
 from google.cloud.bigquery.schema import SchemaField
 
 
@@ -52,6 +58,12 @@ class ExternalSourceFormat(object):
 
     DATASTORE_BACKUP = "DATASTORE_BACKUP"
     """Specifies datastore backup format"""
+
+    ORC = "ORC"
+    """Specifies ORC format."""
+
+    PARQUET = "PARQUET"
+    """Specifies Parquet format."""
 
     BIGTABLE = "BIGTABLE"
     """Specifies Bigtable format."""
@@ -149,7 +161,7 @@ class BigtableColumn(object):
     def type_(self, value):
         self._properties["type"] = value
 
-    def to_api_repr(self):
+    def to_api_repr(self) -> dict:
         """Build an API representation of this object.
 
         Returns:
@@ -159,7 +171,7 @@ class BigtableColumn(object):
         return copy.deepcopy(self._properties)
 
     @classmethod
-    def from_api_repr(cls, resource):
+    def from_api_repr(cls, resource: dict) -> "BigtableColumn":
         """Factory: construct a :class:`~.external_config.BigtableColumn`
         instance given its API representation.
 
@@ -251,7 +263,7 @@ class BigtableColumnFamily(object):
     def columns(self, value):
         self._properties["columns"] = [col.to_api_repr() for col in value]
 
-    def to_api_repr(self):
+    def to_api_repr(self) -> dict:
         """Build an API representation of this object.
 
         Returns:
@@ -261,7 +273,7 @@ class BigtableColumnFamily(object):
         return copy.deepcopy(self._properties)
 
     @classmethod
-    def from_api_repr(cls, resource):
+    def from_api_repr(cls, resource: dict) -> "BigtableColumnFamily":
         """Factory: construct a :class:`~.external_config.BigtableColumnFamily`
         instance given its API representation.
 
@@ -281,8 +293,7 @@ class BigtableColumnFamily(object):
 
 
 class BigtableOptions(object):
-    """Options that describe how to treat Bigtable tables as BigQuery tables.
-    """
+    """Options that describe how to treat Bigtable tables as BigQuery tables."""
 
     _SOURCE_FORMAT = "BIGTABLE"
     _RESOURCE_NAME = "bigtableOptions"
@@ -333,7 +344,7 @@ class BigtableOptions(object):
     def column_families(self, value):
         self._properties["columnFamilies"] = [cf.to_api_repr() for cf in value]
 
-    def to_api_repr(self):
+    def to_api_repr(self) -> dict:
         """Build an API representation of this object.
 
         Returns:
@@ -343,7 +354,7 @@ class BigtableOptions(object):
         return copy.deepcopy(self._properties)
 
     @classmethod
-    def from_api_repr(cls, resource):
+    def from_api_repr(cls, resource: dict) -> "BigtableOptions":
         """Factory: construct a :class:`~.external_config.BigtableOptions`
         instance given its API representation.
 
@@ -412,6 +423,20 @@ class CSVOptions(object):
         self._properties["encoding"] = value
 
     @property
+    def preserve_ascii_control_characters(self):
+        """bool: Indicates if the embedded ASCII control characters
+        (the first 32 characters in the ASCII-table, from '\x00' to '\x1F') are preserved.
+
+        See
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#CsvOptions.FIELDS.preserve_ascii_control_characters
+        """
+        return self._properties.get("preserveAsciiControlCharacters")
+
+    @preserve_ascii_control_characters.setter
+    def preserve_ascii_control_characters(self, value):
+        self._properties["preserveAsciiControlCharacters"] = value
+
+    @property
     def field_delimiter(self):
         """str: The separator for fields in a CSV file. Defaults to comma (',').
 
@@ -450,7 +475,61 @@ class CSVOptions(object):
     def skip_leading_rows(self, value):
         self._properties["skipLeadingRows"] = str(value)
 
-    def to_api_repr(self):
+    @property
+    def source_column_match(self) -> Optional[SourceColumnMatch]:
+        """Optional[google.cloud.bigquery.enums.SourceColumnMatch]: Controls the
+        strategy used to match loaded columns to the schema. If not set, a sensible
+        default is chosen based on how the schema is provided. If autodetect is
+        used, then columns are matched by name. Otherwise, columns are matched by
+        position. This is done to keep the behavior backward-compatible.
+
+        Acceptable values are:
+
+            SOURCE_COLUMN_MATCH_UNSPECIFIED: Unspecified column name match option.
+            POSITION: matches by position. This assumes that the columns are ordered
+            the same way as the schema.
+            NAME: matches by name. This reads the header row as column names and
+            reorders columns to match the field names in the schema.
+
+        See
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#CsvOptions.FIELDS.source_column_match
+        """
+
+        value = self._properties.get("sourceColumnMatch")
+        return SourceColumnMatch(value) if value is not None else None
+
+    @source_column_match.setter
+    def source_column_match(self, value: Union[SourceColumnMatch, str, None]):
+        if value is not None and not isinstance(value, (SourceColumnMatch, str)):
+            raise TypeError(
+                "value must be a google.cloud.bigquery.enums.SourceColumnMatch, str, or None"
+            )
+        if isinstance(value, SourceColumnMatch):
+            value = value.value
+        self._properties["sourceColumnMatch"] = value if value else None
+
+    @property
+    def null_markers(self) -> Optional[Iterable[str]]:
+        """Optional[Iterable[str]]: A list of strings represented as SQL NULL values in a CSV file.
+
+        .. note::
+            null_marker and null_markers can't be set at the same time.
+            If null_marker is set, null_markers has to be not set.
+            If null_markers is set, null_marker has to be not set.
+            If both null_marker and null_markers are set at the same time, a user error would be thrown.
+            Any strings listed in null_markers, including empty string would be interpreted as SQL NULL.
+            This applies to all column types.
+
+        See
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#CsvOptions.FIELDS.null_markers
+        """
+        return self._properties.get("nullMarkers")
+
+    @null_markers.setter
+    def null_markers(self, value: Optional[Iterable[str]]):
+        self._properties["nullMarkers"] = value
+
+    def to_api_repr(self) -> dict:
         """Build an API representation of this object.
 
         Returns:
@@ -459,7 +538,7 @@ class CSVOptions(object):
         return copy.deepcopy(self._properties)
 
     @classmethod
-    def from_api_repr(cls, resource):
+    def from_api_repr(cls, resource: dict) -> "CSVOptions":
         """Factory: construct a :class:`~.external_config.CSVOptions` instance
         given its API representation.
 
@@ -513,7 +592,7 @@ class GoogleSheetsOptions(object):
     def range(self, value):
         self._properties["range"] = value
 
-    def to_api_repr(self):
+    def to_api_repr(self) -> dict:
         """Build an API representation of this object.
 
         Returns:
@@ -522,7 +601,7 @@ class GoogleSheetsOptions(object):
         return copy.deepcopy(self._properties)
 
     @classmethod
-    def from_api_repr(cls, resource):
+    def from_api_repr(cls, resource: dict) -> "GoogleSheetsOptions":
         """Factory: construct a :class:`~.external_config.GoogleSheetsOptions`
         instance given its API representation.
 
@@ -540,22 +619,32 @@ class GoogleSheetsOptions(object):
         return config
 
 
-_OPTION_CLASSES = (BigtableOptions, CSVOptions, GoogleSheetsOptions)
+_OPTION_CLASSES = (
+    AvroOptions,
+    BigtableOptions,
+    CSVOptions,
+    GoogleSheetsOptions,
+    ParquetOptions,
+)
+
+OptionsType = Union[
+    AvroOptions,
+    BigtableOptions,
+    CSVOptions,
+    GoogleSheetsOptions,
+    ParquetOptions,
+]
 
 
 class HivePartitioningOptions(object):
-    """[Beta] Options that configure hive partitioning.
-
-    .. note::
-        **Experimental**. This feature is experimental and might change or
-        have limited support.
+    """Options that configure hive partitioning.
 
     See
     https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#HivePartitioningOptions
     """
 
-    def __init__(self):
-        self._properties = {}
+    def __init__(self) -> None:
+        self._properties: Dict[str, Any] = {}
 
     @property
     def mode(self):
@@ -601,7 +690,7 @@ class HivePartitioningOptions(object):
     def require_partition_filter(self, value):
         self._properties["requirePartitionFilter"] = value
 
-    def to_api_repr(self):
+    def to_api_repr(self) -> dict:
         """Build an API representation of this object.
 
         Returns:
@@ -610,7 +699,7 @@ class HivePartitioningOptions(object):
         return copy.deepcopy(self._properties)
 
     @classmethod
-    def from_api_repr(cls, resource):
+    def from_api_repr(cls, resource: dict) -> "HivePartitioningOptions":
         """Factory: construct a :class:`~.external_config.HivePartitioningOptions`
         instance given its API representation.
 
@@ -636,13 +725,8 @@ class ExternalConfig(object):
             See :attr:`source_format`.
     """
 
-    def __init__(self, source_format):
+    def __init__(self, source_format) -> None:
         self._properties = {"sourceFormat": source_format}
-        self._options = None
-        for optcls in _OPTION_CLASSES:
-            if source_format == optcls._SOURCE_FORMAT:
-                self._options = optcls()
-                break
 
     @property
     def source_format(self):
@@ -655,9 +739,19 @@ class ExternalConfig(object):
         return self._properties["sourceFormat"]
 
     @property
-    def options(self):
-        """Optional[Dict[str, Any]]: Source-specific options."""
-        return self._options
+    def options(self) -> Optional[OptionsType]:
+        """Source-specific options."""
+        for optcls in _OPTION_CLASSES:
+            # The code below is too much magic for mypy to handle.
+            if self.source_format == optcls._SOURCE_FORMAT:  # type: ignore
+                options: OptionsType = optcls()  # type: ignore
+                options._properties = self._properties.setdefault(
+                    optcls._RESOURCE_NAME, {}  # type: ignore
+                )
+                return options
+
+        # No matching source format found.
+        return None
 
     @property
     def autodetect(self):
@@ -687,13 +781,31 @@ class ExternalConfig(object):
         self._properties["compression"] = value
 
     @property
-    def hive_partitioning(self):
-        """Optional[:class:`~.external_config.HivePartitioningOptions`]: [Beta] When set, \
-        it configures hive partitioning support.
+    def decimal_target_types(self) -> Optional[FrozenSet[str]]:
+        """Possible SQL data types to which the source decimal values are converted.
 
-        .. note::
-            **Experimental**. This feature is experimental and might change or
-            have limited support.
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.decimal_target_types
+
+        .. versionadded:: 2.21.0
+        """
+        prop = self._properties.get("decimalTargetTypes")
+        if prop is not None:
+            prop = frozenset(prop)
+        return prop
+
+    @decimal_target_types.setter
+    def decimal_target_types(self, value: Optional[Iterable[str]]):
+        if value is not None:
+            self._properties["decimalTargetTypes"] = list(value)
+        else:
+            if "decimalTargetTypes" in self._properties:
+                del self._properties["decimalTargetTypes"]
+
+    @property
+    def hive_partitioning(self):
+        """Optional[:class:`~.external_config.HivePartitioningOptions`]: When set, \
+        it configures hive partitioning support.
 
         See
         https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.hive_partitioning_options
@@ -707,6 +819,20 @@ class ExternalConfig(object):
     def hive_partitioning(self, value):
         prop = value.to_api_repr() if value is not None else None
         self._properties["hivePartitioningOptions"] = prop
+
+    @property
+    def reference_file_schema_uri(self):
+        """Optional[str]:
+        When creating an external table, the user can provide a reference file with the
+        table schema. This is enabled for the following formats:
+
+        AVRO, PARQUET, ORC
+        """
+        return self._properties.get("referenceFileSchemaUri")
+
+    @reference_file_schema_uri.setter
+    def reference_file_schema_uri(self, value):
+        self._properties["referenceFileSchemaUri"] = value
 
     @property
     def ignore_unknown_values(self):
@@ -757,7 +883,9 @@ class ExternalConfig(object):
         See
         https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.schema
         """
-        prop = self._properties.get("schema", {})
+        prop: Dict[str, Any] = typing.cast(
+            Dict[str, Any], self._properties.get("schema", {})
+        )
         return [SchemaField.from_api_repr(field) for field in prop.get("fields", [])]
 
     @schema.setter
@@ -767,7 +895,208 @@ class ExternalConfig(object):
             prop = {"fields": [field.to_api_repr() for field in value]}
         self._properties["schema"] = prop
 
-    def to_api_repr(self):
+    @property
+    def date_format(self) -> Optional[str]:
+        """Optional[str]: Format used to parse DATE values. Supports C-style and SQL-style values.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.date_format
+        """
+        result = self._properties.get("dateFormat")
+        return typing.cast(str, result)
+
+    @date_format.setter
+    def date_format(self, value: Optional[str]):
+        self._properties["dateFormat"] = value
+
+    @property
+    def datetime_format(self) -> Optional[str]:
+        """Optional[str]: Format used to parse DATETIME values. Supports C-style
+        and SQL-style values.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.datetime_format
+        """
+        result = self._properties.get("datetimeFormat")
+        return typing.cast(str, result)
+
+    @datetime_format.setter
+    def datetime_format(self, value: Optional[str]):
+        self._properties["datetimeFormat"] = value
+
+    @property
+    def time_zone(self) -> Optional[str]:
+        """Optional[str]: Time zone used when parsing timestamp values that do not
+        have specific time zone information (e.g. 2024-04-20 12:34:56). The expected
+        format is an IANA timezone string (e.g. America/Los_Angeles).
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.time_zone
+        """
+
+        result = self._properties.get("timeZone")
+        return typing.cast(str, result)
+
+    @time_zone.setter
+    def time_zone(self, value: Optional[str]):
+        self._properties["timeZone"] = value
+
+    @property
+    def time_format(self) -> Optional[str]:
+        """Optional[str]: Format used to parse TIME values. Supports C-style and SQL-style values.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.time_format
+        """
+        result = self._properties.get("timeFormat")
+        return typing.cast(str, result)
+
+    @time_format.setter
+    def time_format(self, value: Optional[str]):
+        self._properties["timeFormat"] = value
+
+    @property
+    def timestamp_format(self) -> Optional[str]:
+        """Optional[str]: Format used to parse TIMESTAMP values. Supports C-style and SQL-style values.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.timestamp_format
+        """
+        result = self._properties.get("timestampFormat")
+        return typing.cast(str, result)
+
+    @timestamp_format.setter
+    def timestamp_format(self, value: Optional[str]):
+        self._properties["timestampFormat"] = value
+
+    @property
+    def connection_id(self):
+        """Optional[str]: ID of a BigQuery Connection API
+        resource.
+        """
+        return self._properties.get("connectionId")
+
+    @connection_id.setter
+    def connection_id(self, value):
+        self._properties["connectionId"] = value
+
+    @property
+    def avro_options(self) -> Optional[AvroOptions]:
+        """Additional properties to set if ``sourceFormat`` is set to AVRO.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.avro_options
+        """
+        if self.source_format == ExternalSourceFormat.AVRO:
+            self._properties.setdefault(AvroOptions._RESOURCE_NAME, {})
+        resource = self._properties.get(AvroOptions._RESOURCE_NAME)
+        if resource is None:
+            return None
+        options = AvroOptions()
+        options._properties = resource
+        return options
+
+    @avro_options.setter
+    def avro_options(self, value):
+        if self.source_format != ExternalSourceFormat.AVRO:
+            msg = f"Cannot set Avro options, source format is {self.source_format}"
+            raise TypeError(msg)
+        self._properties[AvroOptions._RESOURCE_NAME] = value._properties
+
+    @property
+    def bigtable_options(self) -> Optional[BigtableOptions]:
+        """Additional properties to set if ``sourceFormat`` is set to BIGTABLE.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.bigtable_options
+        """
+        if self.source_format == ExternalSourceFormat.BIGTABLE:
+            self._properties.setdefault(BigtableOptions._RESOURCE_NAME, {})
+        resource = self._properties.get(BigtableOptions._RESOURCE_NAME)
+        if resource is None:
+            return None
+        options = BigtableOptions()
+        options._properties = resource
+        return options
+
+    @bigtable_options.setter
+    def bigtable_options(self, value):
+        if self.source_format != ExternalSourceFormat.BIGTABLE:
+            msg = f"Cannot set Bigtable options, source format is {self.source_format}"
+            raise TypeError(msg)
+        self._properties[BigtableOptions._RESOURCE_NAME] = value._properties
+
+    @property
+    def csv_options(self) -> Optional[CSVOptions]:
+        """Additional properties to set if ``sourceFormat`` is set to CSV.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.csv_options
+        """
+        if self.source_format == ExternalSourceFormat.CSV:
+            self._properties.setdefault(CSVOptions._RESOURCE_NAME, {})
+        resource = self._properties.get(CSVOptions._RESOURCE_NAME)
+        if resource is None:
+            return None
+        options = CSVOptions()
+        options._properties = resource
+        return options
+
+    @csv_options.setter
+    def csv_options(self, value):
+        if self.source_format != ExternalSourceFormat.CSV:
+            msg = f"Cannot set CSV options, source format is {self.source_format}"
+            raise TypeError(msg)
+        self._properties[CSVOptions._RESOURCE_NAME] = value._properties
+
+    @property
+    def google_sheets_options(self) -> Optional[GoogleSheetsOptions]:
+        """Additional properties to set if ``sourceFormat`` is set to
+        GOOGLE_SHEETS.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.google_sheets_options
+        """
+        if self.source_format == ExternalSourceFormat.GOOGLE_SHEETS:
+            self._properties.setdefault(GoogleSheetsOptions._RESOURCE_NAME, {})
+        resource = self._properties.get(GoogleSheetsOptions._RESOURCE_NAME)
+        if resource is None:
+            return None
+        options = GoogleSheetsOptions()
+        options._properties = resource
+        return options
+
+    @google_sheets_options.setter
+    def google_sheets_options(self, value):
+        if self.source_format != ExternalSourceFormat.GOOGLE_SHEETS:
+            msg = f"Cannot set Google Sheets options, source format is {self.source_format}"
+            raise TypeError(msg)
+        self._properties[GoogleSheetsOptions._RESOURCE_NAME] = value._properties
+
+    @property
+    def parquet_options(self) -> Optional[ParquetOptions]:
+        """Additional properties to set if ``sourceFormat`` is set to PARQUET.
+
+        See:
+        https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration.FIELDS.parquet_options
+        """
+        if self.source_format == ExternalSourceFormat.PARQUET:
+            self._properties.setdefault(ParquetOptions._RESOURCE_NAME, {})
+        resource = self._properties.get(ParquetOptions._RESOURCE_NAME)
+        if resource is None:
+            return None
+        options = ParquetOptions()
+        options._properties = resource
+        return options
+
+    @parquet_options.setter
+    def parquet_options(self, value):
+        if self.source_format != ExternalSourceFormat.PARQUET:
+            msg = f"Cannot set Parquet options, source format is {self.source_format}"
+            raise TypeError(msg)
+        self._properties[ParquetOptions._RESOURCE_NAME] = value._properties
+
+    def to_api_repr(self) -> dict:
         """Build an API representation of this object.
 
         Returns:
@@ -775,14 +1104,10 @@ class ExternalConfig(object):
                 A dictionary in the format used by the BigQuery API.
         """
         config = copy.deepcopy(self._properties)
-        if self.options is not None:
-            r = self.options.to_api_repr()
-            if r != {}:
-                config[self.options._RESOURCE_NAME] = r
         return config
 
     @classmethod
-    def from_api_repr(cls, resource):
+    def from_api_repr(cls, resource: dict) -> "ExternalConfig":
         """Factory: construct an :class:`~.external_config.ExternalConfig`
         instance given its API representation.
 
@@ -796,10 +1121,184 @@ class ExternalConfig(object):
             ExternalConfig: Configuration parsed from ``resource``.
         """
         config = cls(resource["sourceFormat"])
-        for optcls in _OPTION_CLASSES:
-            opts = resource.get(optcls._RESOURCE_NAME)
-            if opts is not None:
-                config._options = optcls.from_api_repr(opts)
-                break
         config._properties = copy.deepcopy(resource)
+        return config
+
+
+class ExternalCatalogDatasetOptions:
+    """Options defining open source compatible datasets living in the BigQuery catalog.
+    Contains metadata of open source database, schema or namespace represented
+    by the current dataset.
+
+    Args:
+        default_storage_location_uri (Optional[str]): The storage location URI for all
+            tables in the dataset. Equivalent to hive metastore's database
+            locationUri. Maximum length of 1024 characters. (str)
+        parameters (Optional[dict[str, Any]]): A map of key value pairs defining the parameters
+            and properties of the open source schema. Maximum size of 2Mib.
+    """
+
+    def __init__(
+        self,
+        default_storage_location_uri: Optional[str] = None,
+        parameters: Optional[Dict[str, Any]] = None,
+    ):
+        self._properties: Dict[str, Any] = {}
+        self.default_storage_location_uri = default_storage_location_uri
+        self.parameters = parameters
+
+    @property
+    def default_storage_location_uri(self) -> Optional[str]:
+        """Optional. The storage location URI for all tables in the dataset.
+        Equivalent to hive metastore's database locationUri. Maximum length of
+        1024 characters."""
+
+        return self._properties.get("defaultStorageLocationUri")
+
+    @default_storage_location_uri.setter
+    def default_storage_location_uri(self, value: Optional[str]):
+        value = _helpers._isinstance_or_raise(value, str, none_allowed=True)
+        self._properties["defaultStorageLocationUri"] = value
+
+    @property
+    def parameters(self) -> Optional[Dict[str, Any]]:
+        """Optional. A map of key value pairs defining the parameters and
+        properties of the open source schema. Maximum size of 2Mib."""
+
+        return self._properties.get("parameters")
+
+    @parameters.setter
+    def parameters(self, value: Optional[Dict[str, Any]]):
+        value = _helpers._isinstance_or_raise(value, dict, none_allowed=True)
+        self._properties["parameters"] = value
+
+    def to_api_repr(self) -> dict:
+        """Build an API representation of this object.
+
+        Returns:
+            Dict[str, Any]:
+                A dictionary in the format used by the BigQuery API.
+        """
+        return self._properties
+
+    @classmethod
+    def from_api_repr(cls, api_repr: dict) -> ExternalCatalogDatasetOptions:
+        """Factory: constructs an instance of the class (cls)
+        given its API representation.
+
+        Args:
+            api_repr (Dict[str, Any]):
+                API representation of the object to be instantiated.
+
+        Returns:
+            An instance of the class initialized with data from 'resource'.
+        """
+        config = cls()
+        config._properties = api_repr
+        return config
+
+
+class ExternalCatalogTableOptions:
+    """Metadata about open source compatible table. The fields contained in these
+    options correspond to hive metastore's table level properties.
+
+    Args:
+        connection_id  (Optional[str]): The connection specifying the credentials to be
+            used to read external storage, such as Azure Blob, Cloud Storage, or
+            S3. The connection is needed to read the open source table from
+            BigQuery Engine. The connection_id can have the form `..` or
+            `projects//locations//connections/`.
+        parameters (Union[Dict[str, Any], None]): A map of key value pairs defining the parameters
+            and properties of the open source table. Corresponds with hive meta
+            store table parameters. Maximum size of 4Mib.
+        storage_descriptor (Optional[StorageDescriptor]): A storage descriptor containing information
+            about the physical storage of this table.
+    """
+
+    def __init__(
+        self,
+        connection_id: Optional[str] = None,
+        parameters: Union[Dict[str, Any], None] = None,
+        storage_descriptor: Optional[schema.StorageDescriptor] = None,
+    ):
+        self._properties: Dict[str, Any] = {}
+        self.connection_id = connection_id
+        self.parameters = parameters
+        self.storage_descriptor = storage_descriptor
+
+    @property
+    def connection_id(self) -> Optional[str]:
+        """Optional. The connection specifying the credentials to be
+        used to read external storage, such as Azure Blob, Cloud Storage, or
+        S3. The connection is needed to read the open source table from
+        BigQuery Engine. The connection_id can have the form `..` or
+        `projects//locations//connections/`.
+        """
+
+        return self._properties.get("connectionId")
+
+    @connection_id.setter
+    def connection_id(self, value: Optional[str]):
+        value = _helpers._isinstance_or_raise(value, str, none_allowed=True)
+        self._properties["connectionId"] = value
+
+    @property
+    def parameters(self) -> Union[Dict[str, Any], None]:
+        """Optional. A map of key value pairs defining the parameters and
+        properties of the open source table. Corresponds with hive meta
+        store table parameters. Maximum size of 4Mib.
+        """
+
+        return self._properties.get("parameters")
+
+    @parameters.setter
+    def parameters(self, value: Union[Dict[str, Any], None]):
+        value = _helpers._isinstance_or_raise(value, dict, none_allowed=True)
+        self._properties["parameters"] = value
+
+    @property
+    def storage_descriptor(self) -> Any:
+        """Optional. A storage descriptor containing information about the
+        physical storage of this table."""
+
+        prop = _helpers._get_sub_prop(self._properties, ["storageDescriptor"])
+
+        if prop is not None:
+            return schema.StorageDescriptor.from_api_repr(prop)
+        return None
+
+    @storage_descriptor.setter
+    def storage_descriptor(self, value: Union[schema.StorageDescriptor, dict, None]):
+        value = _helpers._isinstance_or_raise(
+            value, (schema.StorageDescriptor, dict), none_allowed=True
+        )
+        if isinstance(value, schema.StorageDescriptor):
+            self._properties["storageDescriptor"] = value.to_api_repr()
+        else:
+            self._properties["storageDescriptor"] = value
+
+    def to_api_repr(self) -> dict:
+        """Build an API representation of this object.
+
+        Returns:
+            Dict[str, Any]:
+                A dictionary in the format used by the BigQuery API.
+        """
+
+        return self._properties
+
+    @classmethod
+    def from_api_repr(cls, api_repr: dict) -> ExternalCatalogTableOptions:
+        """Factory: constructs an instance of the class (cls)
+        given its API representation.
+
+        Args:
+            api_repr (Dict[str, Any]):
+                API representation of the object to be instantiated.
+
+        Returns:
+            An instance of the class initialized with data from 'api_repr'.
+        """
+        config = cls()
+        config._properties = api_repr
         return config

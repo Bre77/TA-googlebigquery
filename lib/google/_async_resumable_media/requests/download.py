@@ -14,7 +14,8 @@
 
 """Support for downloading media from Google APIs."""
 
-import urllib3.response
+import urllib3.response  # type: ignore
+import http
 
 from google._async_resumable_media import _download
 from google._async_resumable_media import _helpers
@@ -90,10 +91,11 @@ class Download(_request_helpers.RequestsMixin, _download.Download):
             self._stream.write(chunk)
             local_checksum_object.update(chunk)
 
-        if expected_checksum is None:
-            return
-
-        else:
+        # Don't validate the checksum for partial responses.
+        if (
+            expected_checksum is not None
+            and response.status != http.client.PARTIAL_CONTENT
+        ):
             actual_checksum = sync_helpers.prepare_checksum_digest(
                 checksum_object.digest()
             )
@@ -133,14 +135,14 @@ class Download(_request_helpers.RequestsMixin, _download.Download):
         method, url, payload, headers = self._prepare_request()
         # NOTE: We assume "payload is None" but pass it along anyway.
         request_kwargs = {
-            u"data": payload,
-            u"headers": headers,
-            u"retry_strategy": self._retry_strategy,
-            u"timeout": timeout,
+            "data": payload,
+            "headers": headers,
+            "retry_strategy": self._retry_strategy,
+            "timeout": timeout,
         }
 
         if self._stream is not None:
-            request_kwargs[u"stream"] = True
+            request_kwargs["stream"] = True
 
         result = await _request_helpers.http_request(
             transport, method, url, **request_kwargs
@@ -216,9 +218,11 @@ class RawDownload(_request_helpers.RawRequestsMixin, _download.Download):
             self._stream.write(chunk)
             checksum_object.update(chunk)
 
-        if expected_checksum is None:
-            return
-        else:
+        # Don't validate the checksum for partial responses.
+        if (
+            expected_checksum is not None
+            and response.status != http.client.PARTIAL_CONTENT
+        ):
             actual_checksum = sync_helpers.prepare_checksum_digest(
                 checksum_object.digest()
             )
@@ -307,7 +311,6 @@ class ChunkedDownload(_request_helpers.RequestsMixin, _download.ChunkedDownload)
     async def consume_next_chunk(
         self, transport, timeout=_request_helpers._DEFAULT_TIMEOUT
     ):
-
         """
         Consume the next chunk of the resource to be downloaded.
 
@@ -425,8 +428,8 @@ def _add_decoder(response_raw, checksum):
         caller will no longer need to hash to decoded bytes.
     """
 
-    encoding = response_raw.headers.get(u"content-encoding", u"").lower()
-    if encoding != u"gzip":
+    encoding = response_raw.headers.get("content-encoding", "").lower()
+    if encoding != "gzip":
         return checksum
 
     response_raw._decoder = _GzipDecoder(checksum)
@@ -448,14 +451,19 @@ class _GzipDecoder(urllib3.response.GzipDecoder):
         super(_GzipDecoder, self).__init__()
         self._checksum = checksum
 
-    def decompress(self, data):
+    def decompress(self, data, max_length=-1):
         """Decompress the bytes.
 
         Args:
             data (bytes): The compressed bytes to be decompressed.
+            max_length (int): Maximum number of bytes to return. -1 for no
+                limit. Forwarded to the underlying decoder when supported.
 
         Returns:
             bytes: The decompressed bytes from ``data``.
         """
         self._checksum.update(data)
-        return super(_GzipDecoder, self).decompress(data)
+        try:
+            return super(_GzipDecoder, self).decompress(data, max_length=max_length)
+        except TypeError:
+            return super(_GzipDecoder, self).decompress(data)

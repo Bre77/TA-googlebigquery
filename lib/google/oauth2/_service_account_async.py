@@ -75,6 +75,13 @@ class Credentials(
         self.token = access_token
         self.expiry = expiry
 
+    @_helpers.copy_docstring(credentials_async.Credentials)
+    async def before_request(self, request, method, url, headers):
+        # Explicit override to bypass synchronous CredentialsWithRegionalAccessBoundary.
+        await credentials_async.Credentials.before_request(
+            self, request, method, url, headers
+        )
+
 
 class IDTokenCredentials(
     service_account.IDTokenCredentials,
@@ -112,7 +119,7 @@ class IDTokenCredentials(
                 'service-account.json',
                 scopes=['email'],
                 subject='user@example.com'))
-`
+
     The credentials are considered immutable. If you want to modify the scopes
     or the subject used for delegation, use :meth:`with_scopes` or
     :meth:`with_subject`::
@@ -130,3 +137,11 @@ class IDTokenCredentials(
         )
         self.token = access_token
         self.expiry = expiry
+
+    @_helpers.copy_docstring(credentials_async.Credentials)
+    async def before_request(self, request, method, url, headers):
+        # Explicit override to bypass synchronous CredentialsWithRegionalAccessBoundary
+        # and disable Regional Access Boundary refresh for async credentials.
+        await credentials_async.Credentials.before_request(
+            self, request, method, url, headers
+        )

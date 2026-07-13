@@ -14,14 +14,14 @@
 
 """Helpers for :mod:`datetime`."""
 
-import calendar
 import datetime
 import re
 
 from google.protobuf import timestamp_pb2
 
 
-_UTC_EPOCH = datetime.datetime.utcfromtimestamp(0).replace(tzinfo=datetime.timezone.utc)
+_UTC_EPOCH = datetime.datetime.fromtimestamp(0, datetime.timezone.utc)
+
 _RFC3339_MICROS = "%Y-%m-%dT%H:%M:%S.%fZ"
 _RFC3339_NO_FRACTION = "%Y-%m-%dT%H:%M:%S"
 # datetime.strptime cannot handle nanosecond precision:  parse w/ regex
@@ -63,7 +63,7 @@ def _to_rfc3339(value, ignore_zone=True):
             datetime object is ignored and the datetime is treated as UTC.
 
     Returns:
-        str: The RFC3339 formated string representing the datetime.
+        str: The RFC3339 formatted string representing the datetime.
     """
     if not ignore_zone and value.tzinfo is not None:
         # Convert to UTC and remove the time zone info.
@@ -97,7 +97,7 @@ class DatetimeWithNanoseconds(datetime.datetime):
         new values by whichever keyword arguments are specified. For example,
         if d == date(2002, 12, 31), then
         d.replace(day=26) == date(2002, 12, 26).
-        NOTE: nanosecond and microsecond are mutually exclusive arguemnts.
+        NOTE: nanosecond and microsecond are mutually exclusive arguments.
         """
 
         ms_provided = "microsecond" in kw
@@ -171,7 +171,7 @@ class DatetimeWithNanoseconds(datetime.datetime):
             nanos = 0
         else:
             scale = 9 - len(fraction)
-            nanos = int(fraction) * (10 ** scale)
+            nanos = int(fraction) * (10**scale)
         return cls(
             bare.year,
             bare.month,

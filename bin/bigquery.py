@@ -3,11 +3,15 @@ import json
 import os
 import sys
 import time
+import warnings
 
-# This add-on vendors older generated protobuf modules that are incompatible
-# with newer protobuf C extensions bundled in some Splunk Python runtimes.
-# Force the pure-Python implementation before importing any google packages.
+# protobuf's compiled upb accelerator is arch-specific and isn't vendored (see
+# .build.sh); force the pure-Python implementation so imports don't fail looking for it.
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
+# Splunk 9.x-10.1 bundle Python 3.9, which is past upstream end-of-life; silence the
+# resulting FutureWarning nag from google-api-core/google-auth on every scheduled run.
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from google.cloud import bigquery

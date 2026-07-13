@@ -12,22 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Helpers for general Python functionality."""
+# This import for backward compatibility only.
+from functools import wraps  # noqa: F401 pragma: NO COVER
 
-import functools
+_CREDENTIALS_FILE_WARNING = """\
+The `credentials_file` argument is deprecated because of a potential security risk.
 
-import six
+The `google.auth.load_credentials_from_file` method does not validate the credential
+configuration. The security risk occurs when a credential configuration is accepted
+from a source that is not under your control and used without validation on your side.
 
+If you know that you will be loading credential configurations of a
+specific type, it is recommended to use a credential-type-specific
+load method.
 
-# functools.partial objects lack several attributes present on real function
-# objects. In Python 2 wraps fails on this so use a restricted set instead.
-_PARTIAL_VALID_ASSIGNMENTS = ("__doc__",)
+This will ensure that an unexpected credential type with potential for
+malicious intent is not loaded unintentionally. You might still have to do
+validation for certain credential types. Please follow the recommendations
+for that method. For example, if you want to load only service accounts,
+you can create the service account credentials explicitly:
 
+```
+from google.cloud.vision_v1 import ImageAnnotatorClient
+from google.oauth2 import service_account
 
-def wraps(wrapped):
-    """A functools.wraps helper that handles partial objects on Python 2."""
-    # https://github.com/google/pytype/issues/322
-    if isinstance(wrapped, functools.partial):  # pytype: disable=wrong-arg-types
-        return six.wraps(wrapped, assigned=_PARTIAL_VALID_ASSIGNMENTS)
-    else:
-        return six.wraps(wrapped)
+credentials = service_account.Credentials.from_service_account_file(filename)
+client = ImageAnnotatorClient(credentials=credentials)
+```
+
+If you are loading your credential configuration from an untrusted source and have
+not mitigated the risks (e.g. by validating the configuration yourself), make
+these changes as soon as possible to prevent security risks to your environment.
+
+Regardless of the method used, it is always your responsibility to validate
+configurations received from external sources.
+
+Refer to https://cloud.google.com/docs/authentication/external/externally-sourced-credentials
+for more details.
+"""

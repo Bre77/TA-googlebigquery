@@ -14,13 +14,12 @@
 
 """Transport adapter for http.client, for internal use only."""
 
+import http.client as http_client
 import logging
 import socket
+import urllib
 
-import six
-from six.moves import http_client
-from six.moves import urllib
-
+from google.auth import _helpers
 from google.auth import exceptions
 from google.auth import transport
 
@@ -95,21 +94,21 @@ class Request(transport.Request):
         if parts.scheme != "http":
             raise exceptions.TransportError(
                 "http.client transport only supports the http scheme, {}"
-                "was specified".format(parts.scheme)
+                " was specified".format(parts.scheme)
             )
 
         connection = http_client.HTTPConnection(parts.netloc, timeout=timeout)
 
         try:
-            _LOGGER.debug("Making request: %s %s", method, url)
-
+            _helpers.request_log(_LOGGER, method, url, body, headers)
             connection.request(method, path, body=body, headers=headers, **kwargs)
             response = connection.getresponse()
+            _helpers.response_log(_LOGGER, response)
             return Response(response)
 
         except (http_client.HTTPException, socket.error) as caught_exc:
             new_exc = exceptions.TransportError(caught_exc)
-            six.raise_from(new_exc, caught_exc)
+            raise new_exc from caught_exc
 
         finally:
             connection.close()

@@ -29,7 +29,21 @@ class MessageRule:
         if isinstance(value, self._wrapper):
             return self._wrapper.pb(value)
         if isinstance(value, dict) and not self.is_map:
-            return self._descriptor(**value)
+            # We need to use the wrapper's marshaling to handle
+            # potentially problematic nested messages.
+            try:
+                # Try the fast path first.
+                return self._descriptor(**value)
+            except (TypeError, ValueError, AttributeError):
+                # If we have a TypeError, ValueError or AttributeError,
+                # try the slow path in case the error
+                # was:
+                # - an int64/string issue.
+                # - a missing key issue in case a key only exists with a `_` suffix.
+                #   See related issue: https://github.com/googleapis/python-api-core/issues/227.
+                # - a missing key issue due to nested struct. See: https://github.com/googleapis/proto-plus-python/issues/424.
+                # - a missing key issue due to nested duration. See: https://github.com/googleapis/google-cloud-python/issues/13350.
+                return self._wrapper(value)._pb
         return value
 
     @property

@@ -16,8 +16,10 @@ import collections
 import collections.abc
 import copy
 import re
-from typing import List, Type
+from typing import Any, Dict, List, Optional, Type
+import warnings
 
+import google.protobuf
 from google.protobuf import descriptor_pb2
 from google.protobuf import message
 from google.protobuf.json_format import MessageToDict, MessageToJson, Parse
@@ -29,6 +31,15 @@ from proto.fields import MapField
 from proto.fields import RepeatedField
 from proto.marshal import Marshal
 from proto.primitives import ProtoType
+from proto.utils import has_upb
+
+
+PROTOBUF_VERSION = google.protobuf.__version__
+
+# extract the major version code
+_PROTOBUF_MAJOR_VERSION = PROTOBUF_VERSION.partition(".")[0]
+
+_upb = has_upb()  # Important to cache result here.
 
 
 class MessageMeta(type):
@@ -67,7 +78,9 @@ class MessageMeta(type):
             # Determine the name of the entry message.
             msg_name = "{pascal_key}Entry".format(
                 pascal_key=re.sub(
-                    r"_\w", lambda m: m.group()[1:].upper(), key,
+                    r"_\w",
+                    lambda m: m.group()[1:].upper(),
+                    key,
                 ).replace(key[0], key[0].upper(), 1),
             )
 
@@ -83,20 +96,26 @@ class MessageMeta(type):
                 {
                     "__module__": attrs.get("__module__", None),
                     "__qualname__": "{prefix}.{name}".format(
-                        prefix=attrs.get("__qualname__", name), name=msg_name,
+                        prefix=attrs.get("__qualname__", name),
+                        name=msg_name,
                     ),
                     "_pb_options": {"map_entry": True},
                 }
             )
             entry_attrs["key"] = Field(field.map_key_type, number=1)
             entry_attrs["value"] = Field(
-                field.proto_type, number=2, enum=field.enum, message=field.message,
+                field.proto_type,
+                number=2,
+                enum=field.enum,
+                message=field.message,
             )
             map_fields[msg_name] = MessageMeta(msg_name, (Message,), entry_attrs)
 
             # Create the repeated field for the entry message.
             map_fields[key] = RepeatedField(
-                ProtoType.MESSAGE, number=field.number, message=map_fields[msg_name],
+                ProtoType.MESSAGE,
+                number=field.number,
+                message=map_fields[msg_name],
             )
 
         # Add the new entries to the attrs
@@ -273,6 +292,30 @@ class MessageMeta(type):
     def meta(cls):
         return cls._meta
 
+    def __dir__(self):
+        try:
+            names = set(dir(type))
+            names.update(
+                (
+                    "meta",
+                    "pb",
+                    "wrap",
+                    "serialize",
+                    "deserialize",
+                    "to_json",
+                    "from_json",
+                    "to_dict",
+                    "copy_from",
+                )
+            )
+            desc = self.pb().DESCRIPTOR
+            names.update(t.name for t in desc.nested_types)
+            names.update(e.name for e in desc.enum_types)
+
+            return names
+        except AttributeError:
+            return dir(type)
+
     def pb(cls, obj=None, *, coerce: bool = False):
         """Return the underlying protobuf Message class or instance.
 
@@ -288,7 +331,13 @@ class MessageMeta(type):
             if coerce:
                 obj = cls(obj)
             else:
-                raise TypeError("%r is not an instance of %s" % (obj, cls.__name__,))
+                raise TypeError(
+                    "%r is not an instance of %s"
+                    % (
+                        obj,
+                        cls.__name__,
+                    )
+                )
         return obj._pb
 
     def wrap(cls, pb):
@@ -300,7 +349,7 @@ class MessageMeta(type):
         """
         # Optimized fast path.
         instance = cls.__new__(cls)
-        instance.__dict__["_pb"] = pb
+        super(cls, instance).__setattr__("_pb", pb)
         return instance
 
     def serialize(cls, instance) -> bytes:
@@ -327,12 +376,101 @@ class MessageMeta(type):
         """
         return cls.wrap(cls.pb().FromString(payload))
 
+    def _warn_if_including_default_value_fields_is_used_protobuf_5(
+        cls, including_default_value_fields: Optional[bool]
+    ) -> None:
+        """
+        Warn Protobuf 5.x+ users that `including_default_value_fields` is deprecated if it is set.
+
+        Args:
+            including_default_value_fields (Optional(bool)): The value of `including_default_value_fields` set by the user.
+        """
+        if (
+            _PROTOBUF_MAJOR_VERSION not in ("3", "4")
+            and including_default_value_fields is not None
+        ):
+            warnings.warn(
+                """The argument `including_default_value_fields` has been removed from
+                Protobuf 5.x. Please use `always_print_fields_with_no_presence` instead.
+                """,
+                DeprecationWarning,
+            )
+
+    def _raise_if_print_fields_values_are_set_and_differ(
+        cls,
+        always_print_fields_with_no_presence: Optional[bool],
+        including_default_value_fields: Optional[bool],
+    ) -> None:
+        """
+        Raise Exception if both `always_print_fields_with_no_presence` and `including_default_value_fields` are set
+            and the values differ.
+
+        Args:
+            always_print_fields_with_no_presence (Optional(bool)): The value of `always_print_fields_with_no_presence` set by the user.
+            including_default_value_fields (Optional(bool)): The value of `including_default_value_fields` set by the user.
+        Returns:
+            None
+        Raises:
+            ValueError: if both `always_print_fields_with_no_presence` and `including_default_value_fields` are set and
+                the values differ.
+        """
+        if (
+            always_print_fields_with_no_presence is not None
+            and including_default_value_fields is not None
+            and always_print_fields_with_no_presence != including_default_value_fields
+        ):
+            raise ValueError(
+                "Arguments `always_print_fields_with_no_presence` and `including_default_value_fields` must match"
+            )
+
+    def _normalize_print_fields_without_presence(
+        cls,
+        always_print_fields_with_no_presence: Optional[bool],
+        including_default_value_fields: Optional[bool],
+    ) -> bool:
+        """
+        Return true if fields with no presence should be included in the results.
+        By default, fields with no presence will be included in the results
+        when both `always_print_fields_with_no_presence` and
+        `including_default_value_fields` are not set
+
+        Args:
+            always_print_fields_with_no_presence (Optional(bool)): The value of `always_print_fields_with_no_presence` set by the user.
+            including_default_value_fields (Optional(bool)): The value of `including_default_value_fields` set by the user.
+        Returns:
+            None
+        Raises:
+            ValueError: if both `always_print_fields_with_no_presence` and `including_default_value_fields` are set and
+                the values differ.
+        """
+
+        cls._warn_if_including_default_value_fields_is_used_protobuf_5(
+            including_default_value_fields
+        )
+        cls._raise_if_print_fields_values_are_set_and_differ(
+            always_print_fields_with_no_presence, including_default_value_fields
+        )
+        # Default to True if neither `always_print_fields_with_no_presence` or `including_default_value_fields` is set
+        return (
+            (
+                always_print_fields_with_no_presence is None
+                and including_default_value_fields is None
+            )
+            or always_print_fields_with_no_presence
+            or including_default_value_fields
+        )
+
     def to_json(
         cls,
         instance,
         *,
         use_integers_for_enums=True,
-        including_default_value_fields=True
+        including_default_value_fields=None,
+        preserving_proto_field_name=False,
+        sort_keys=False,
+        indent=2,
+        float_precision=None,
+        always_print_fields_with_no_presence=None,
     ) -> str:
         """Given a message instance, serialize it to json
 
@@ -342,22 +480,38 @@ class MessageMeta(type):
             use_integers_for_enums (Optional(bool)): An option that determines whether enum
                 values should be represented by strings (False) or integers (True).
                 Default is True.
-
+            including_default_value_fields (Optional(bool)): Deprecated. Use argument
+                `always_print_fields_with_no_presence` instead. An option that
+                determines whether the default field values should be included in the results.
+                This value must match `always_print_fields_with_no_presence`,
+                if both arguments are explicitly set.
+            preserving_proto_field_name (Optional(bool)): An option that
+                determines whether field name representations preserve
+                proto case (snake_case) or use lowerCamelCase. Default is False.
+            sort_keys (Optional(bool)): If True, then the output will be sorted by field names.
+                Default is False.
+            indent (Optional(int)): The JSON object will be pretty-printed with this indent level.
+                An indent level of 0 or negative will only insert newlines.
+                Pass None for the most compact representation without newlines.
+            float_precision (Optional(int)): If set, use this to specify float field valid digits.
+                Default is None. [DEPRECATED] float_precision was removed in Protobuf 7.x.
+            always_print_fields_with_no_presence (Optional(bool)): If True, fields without
+                presence (implicit presence scalars, repeated fields, and map fields) will
+                always be serialized. Any field that supports presence is not affected by
+                this option (including singular message fields and oneof fields).
+                This value must match `including_default_value_fields`,
+                if both arguments are explicitly set.
         Returns:
             str: The json string representation of the protocol buffer.
         """
-        return MessageToJson(
-            cls.pb(instance),
-            use_integers_for_enums=use_integers_for_enums,
-            including_default_value_fields=including_default_value_fields,
-        )
+        return _message_to_map(map_fn=MessageToJson, **locals())
 
     def from_json(cls, payload, *, ignore_unknown_fields=False) -> "Message":
         """Given a json string representing an instance,
         parse it into a message.
 
         Args:
-            paylod: A json string representing a message.
+            payload: A json string representing a message.
             ignore_unknown_fields (Optional(bool)): If True, do not raise errors
                 for unknown fields.
 
@@ -369,27 +523,76 @@ class MessageMeta(type):
         Parse(payload, instance._pb, ignore_unknown_fields=ignore_unknown_fields)
         return instance
 
-    def to_dict(cls, instance, *, use_integers_for_enums=True) -> "Message":
+    def to_dict(
+        cls,
+        instance,
+        *,
+        use_integers_for_enums=True,
+        preserving_proto_field_name=True,
+        including_default_value_fields=None,
+        float_precision=None,
+        always_print_fields_with_no_presence=None,
+    ) -> Dict[str, Any]:
         """Given a message instance, return its representation as a python dict.
 
         Args:
             instance: An instance of this message type, or something
-                      compatible (accepted by the type's constructor).
+                compatible (accepted by the type's constructor).
             use_integers_for_enums (Optional(bool)): An option that determines whether enum
                 values should be represented by strings (False) or integers (True).
                 Default is True.
+            preserving_proto_field_name (Optional(bool)): An option that
+                determines whether field name representations preserve
+                proto case (snake_case) or use lowerCamelCase. Default is True.
+            including_default_value_fields (Optional(bool)): Deprecated. Use argument
+                `always_print_fields_with_no_presence` instead. An option that
+                determines whether the default field values should be included in the results.
+                This value must match `always_print_fields_with_no_presence`,
+                if both arguments are explicitly set.
+            float_precision (Optional(int)): If set, use this to specify float field valid digits.
+                Default is None. [DEPRECATED] float_precision was removed in Protobuf 7.x.
+            always_print_fields_with_no_presence (Optional(bool)): If True, fields without
+                presence (implicit presence scalars, repeated fields, and map fields) will
+                always be serialized. Any field that supports presence is not affected by
+                this option (including singular message fields and oneof fields). This value
+                must match `including_default_value_fields`, if both arguments are explicitly set.
 
         Returns:
             dict: A representation of the protocol buffer using pythonic data structures.
                   Messages and map fields are represented as dicts,
                   repeated fields are represented as lists.
         """
-        return MessageToDict(
-            cls.pb(instance),
-            including_default_value_fields=True,
-            preserving_proto_field_name=True,
-            use_integers_for_enums=use_integers_for_enums,
-        )
+        return _message_to_map(map_fn=MessageToDict, **locals())
+
+    def copy_from(cls, instance, other):
+        """Equivalent for protobuf.Message.CopyFrom
+
+        Args:
+            instance: An instance of this message type
+            other: (Union[dict, ~.Message):
+                A dictionary or message to reinitialize the values for this message.
+        """
+        if isinstance(other, cls):
+            # Just want the underlying proto.
+            other = Message.pb(other)
+        elif isinstance(other, cls.pb()):
+            # Don't need to do anything.
+            pass
+        elif isinstance(other, collections.abc.Mapping):
+            # Coerce into a proto
+            other = cls._meta.pb(**other)
+        else:
+            raise TypeError(
+                "invalid argument type to copy to {}: {}".format(
+                    cls.__name__, other.__class__.__name__
+                )
+            )
+
+        # Note: we can't just run self.__init__ because this may be a message field
+        # for a higher order proto; the memory layout for protos is NOT LIKE the
+        # python memory model. We cannot rely on just setting things by reference.
+        # Non-trivial complexity is (partially) hidden by the protobuf runtime.
+        cls.pb(instance).CopyFrom(other)
 
 
 class Message(metaclass=MessageMeta):
@@ -405,7 +608,13 @@ class Message(metaclass=MessageMeta):
             message.
     """
 
-    def __init__(self, mapping=None, *, ignore_unknown_fields=False, **kwargs):
+    def __init__(
+        self,
+        mapping=None,
+        *,
+        ignore_unknown_fields=False,
+        **kwargs,
+    ):
         # We accept several things for `mapping`:
         #   * An instance of this class.
         #   * An instance of the underlying protobuf descriptor class.
@@ -414,7 +623,7 @@ class Message(metaclass=MessageMeta):
         if mapping is None:
             if not kwargs:
                 # Special fast path for empty construction.
-                self.__dict__["_pb"] = self._meta.pb()
+                super().__setattr__("_pb", self._meta.pb())
                 return
 
             mapping = kwargs
@@ -425,12 +634,12 @@ class Message(metaclass=MessageMeta):
             # passed in.
             #
             # The `wrap` method on the metaclass is the public API for taking
-            # ownership of the passed in protobuf objet.
-            mapping = copy.copy(mapping)
+            # ownership of the passed in protobuf object.
+            mapping = copy.deepcopy(mapping)
             if kwargs:
                 mapping.MergeFrom(self._meta.pb(**kwargs))
 
-            self.__dict__["_pb"] = mapping
+            super().__setattr__("_pb", mapping)
             return
         elif isinstance(mapping, type(self)):
             # Just use the above logic on mapping's underlying pb.
@@ -445,7 +654,10 @@ class Message(metaclass=MessageMeta):
             # Sanity check: Did we get something not a map? Error if so.
             raise TypeError(
                 "Invalid constructor input for %s: %r"
-                % (self.__class__.__name__, mapping,)
+                % (
+                    self.__class__.__name__,
+                    mapping,
+                )
             )
 
         params = {}
@@ -453,9 +665,8 @@ class Message(metaclass=MessageMeta):
         # coerced.
         marshal = self._meta.marshal
         for key, value in mapping.items():
-            try:
-                pb_type = self._meta.fields[key].pb_type
-            except KeyError:
+            (key, pb_type) = self._get_pb_type_from_key(key)
+            if pb_type is None:
                 if ignore_unknown_fields:
                     continue
 
@@ -464,11 +675,65 @@ class Message(metaclass=MessageMeta):
                 )
 
             pb_value = marshal.to_proto(pb_type, value)
+
             if pb_value is not None:
                 params[key] = pb_value
 
         # Create the internal protocol buffer.
-        self.__dict__["_pb"] = self._meta.pb(**params)
+        super().__setattr__("_pb", self._meta.pb(**params))
+
+    def _get_pb_type_from_key(self, key):
+        """Given a key, return the corresponding pb_type.
+
+        Args:
+            key(str): The name of the field.
+
+        Returns:
+            A tuple containing a key and pb_type. The pb_type will be
+            the composite type of the field, or the primitive type if a primitive.
+            If no corresponding field exists, return None.
+        """
+
+        pb_type = None
+
+        try:
+            pb_type = self._meta.fields[key].pb_type
+        except KeyError:
+            # Underscores may be appended to field names
+            # that collide with python or proto-plus keywords.
+            # In case a key only exists with a `_` suffix, coerce the key
+            # to include the `_` suffix. It's not possible to
+            # natively define the same field with a trailing underscore in protobuf.
+            # See related issue
+            # https://github.com/googleapis/python-api-core/issues/227
+            if f"{key}_" in self._meta.fields:
+                key = f"{key}_"
+                pb_type = self._meta.fields[key].pb_type
+
+        return (key, pb_type)
+
+    def __dir__(self):
+        desc = type(self).pb().DESCRIPTOR
+        names = {f_name for f_name in self._meta.fields.keys()}
+        names.update(m.name for m in desc.nested_types)
+        names.update(e.name for e in desc.enum_types)
+        names.update(dir(object()))
+        # Can't think of a better way of determining
+        # the special methods than manually listing them.
+        names.update(
+            (
+                "__bool__",
+                "__contains__",
+                "__dict__",
+                "__getattr__",
+                "__getstate__",
+                "__module__",
+                "__setstate__",
+                "__weakref__",
+            )
+        )
+
+        return names
 
     def __bool__(self):
         """Return True if any field is truthy, False otherwise."""
@@ -490,7 +755,7 @@ class Message(metaclass=MessageMeta):
         to get a boolean that distinguishes between ``False`` and ``None``
         (or the same for a string, int, etc.). This library transparently
         handles that case for you, but this method remains available to
-        accomodate cases not automatically covered.
+        accommodate cases not automatically covered.
 
         Args:
             key (str): The name of the field.
@@ -556,13 +821,14 @@ class Message(metaclass=MessageMeta):
             their Python equivalents. See the ``marshal`` module for
             more details.
         """
-        try:
-            pb_type = self._meta.fields[key].pb_type
-            pb_value = getattr(self._pb, key)
-            marshal = self._meta.marshal
-            return marshal.to_python(pb_type, pb_value, absent=key not in self)
-        except KeyError as ex:
-            raise AttributeError(str(ex))
+        (key, pb_type) = self._get_pb_type_from_key(key)
+        if pb_type is None:
+            raise AttributeError(
+                "Unknown field for {}: {}".format(self.__class__.__name__, key)
+            )
+        pb_value = getattr(self._pb, key)
+        marshal = self._meta.marshal
+        return marshal.to_python(pb_type, pb_value, absent=key not in self)
 
     def __ne__(self, other):
         """Return True if the messages are unequal, False otherwise."""
@@ -580,7 +846,12 @@ class Message(metaclass=MessageMeta):
         if key[0] == "_":
             return super().__setattr__(key, value)
         marshal = self._meta.marshal
-        pb_type = self._meta.fields[key].pb_type
+        (key, pb_type) = self._get_pb_type_from_key(key)
+        if pb_type is None:
+            raise AttributeError(
+                "Unknown field for {}: {}".format(self.__class__.__name__, key)
+            )
+
         pb_value = marshal.to_proto(pb_type, value)
 
         # Clear the existing field.
@@ -591,6 +862,15 @@ class Message(metaclass=MessageMeta):
         # Merge in the value being set.
         if pb_value is not None:
             self._pb.MergeFrom(self._meta.pb(**{key: pb_value}))
+
+    def __getstate__(self):
+        """Serialize for pickling."""
+        return self._pb.SerializeToString()
+
+    def __setstate__(self, value):
+        """Deserialization for pickling."""
+        new_pb = self._meta.pb().FromString(value)
+        super().__setattr__("_pb", new_pb)
 
 
 class _MessageInfo:
@@ -615,7 +895,7 @@ class _MessageInfo:
         package: str,
         full_name: str,
         marshal: Marshal,
-        options: descriptor_pb2.MessageOptions
+        options: descriptor_pb2.MessageOptions,
     ) -> None:
         self.package = package
         self.full_name = full_name
@@ -633,6 +913,50 @@ class _MessageInfo:
         loaded, then this method returns None.
         """
         return self._pb
+
+
+def _message_to_map(
+    cls,
+    map_fn,
+    instance,
+    *,
+    including_default_value_fields=None,
+    always_print_fields_with_no_presence=None,
+    float_precision=None,
+    **kwargs,
+):
+    """
+    Helper for logic for Message.to_dict and Message.to_json
+    """
+
+    # The `including_default_value_fields` argument was removed from protobuf 5.x
+    # and replaced with `always_print_fields_with_no_presence` which is similar but
+    # handles optional fields consistently by not affecting them.
+    # The old flag accidentally had inconsistent behavior between optional fields
+    # in proto2 and proto3.
+    print_fields = cls._normalize_print_fields_without_presence(
+        always_print_fields_with_no_presence, including_default_value_fields
+    )
+    if _PROTOBUF_MAJOR_VERSION in ("3", "4"):
+        kwargs["including_default_value_fields"] = print_fields
+    else:
+        kwargs["always_print_fields_with_no_presence"] = print_fields
+
+    if float_precision:
+        # float_precision removed in protobuf 7
+        if _PROTOBUF_MAJOR_VERSION in ("3", "4", "5", "6"):
+            kwargs["float_precision"] = float_precision
+            warning_msg = "`float_precision` will be removed in Protobuf 7.x."
+
+        else:  # pragma: NO COVER
+            warning_msg = (
+                "`float_precision` was removed in Protobuf 7.x+, and will be ignored."
+            )
+        warnings.warn(warning_msg, DeprecationWarning, stacklevel=3)
+    # suppress similar float_precision warning from protobuf library.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*float_precision.*")
+        return map_fn(cls.pb(instance), **kwargs)
 
 
 __all__ = ("Message",)

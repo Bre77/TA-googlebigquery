@@ -14,32 +14,46 @@
 """AsyncIO helpers for wrapping gRPC methods with common functionality.
 
 This is used by gapic clients to provide common error mapping, retry, timeout,
-pagination, and long-running operations to gRPC methods.
+compression, pagination, and long-running operations to gRPC methods.
 """
 
-from google.api_core import general_helpers, grpc_helpers_async
+import functools
+
+from google.api_core import grpc_helpers_async
 from google.api_core.gapic_v1 import client_info
-from google.api_core.gapic_v1.method import (_GapicCallable,  # noqa: F401
-                                             DEFAULT,
-                                             USE_DEFAULT_METADATA)
+from google.api_core.gapic_v1.method import _GapicCallable
+from google.api_core.gapic_v1.method import DEFAULT  # noqa: F401
+from google.api_core.gapic_v1.method import USE_DEFAULT_METADATA  # noqa: F401
+
+_DEFAULT_ASYNC_TRANSPORT_KIND = "grpc_asyncio"
 
 
 def wrap_method(
-        func,
-        default_retry=None,
-        default_timeout=None,
-        client_info=client_info.DEFAULT_CLIENT_INFO,
+    func,
+    default_retry=None,
+    default_timeout=None,
+    default_compression=None,
+    client_info=client_info.DEFAULT_CLIENT_INFO,
+    kind=_DEFAULT_ASYNC_TRANSPORT_KIND,
 ):
     """Wrap an async RPC method with common behavior.
 
     Returns:
-        Callable: A new callable that takes optional ``retry`` and ``timeout``
-            arguments and applies the common error mapping, retry, timeout,
-            and metadata behavior to the low-level RPC method.
+        Callable: A new callable that takes optional ``retry``, ``timeout``,
+            and ``compression`` arguments and applies the common error mapping,
+            retry, timeout, metadata, and compression behavior to the low-level RPC method.
     """
-    func = grpc_helpers_async.wrap_errors(func)
+    if kind == _DEFAULT_ASYNC_TRANSPORT_KIND:
+        func = grpc_helpers_async.wrap_errors(func)
 
     metadata = [client_info.to_grpc_metadata()] if client_info is not None else None
 
-    return general_helpers.wraps(func)(_GapicCallable(
-        func, default_retry, default_timeout, metadata=metadata))
+    return functools.wraps(func)(
+        _GapicCallable(
+            func,
+            default_retry,
+            default_timeout,
+            default_compression,
+            metadata=metadata,
+        )
+    )

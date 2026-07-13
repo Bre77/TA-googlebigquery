@@ -77,7 +77,9 @@ index="_internal" bigquery source="*/splunkd.log"
 
 ## Binary File Declaration
 
-* `lib/google/protobuf/internal/_api_implementation.cpython-37m-x86_64-linux-gnu.so`
-* `lib/google/protobuf/pyext/_message.cpython-37m-x86_64-linux-gnu.so`
-* `lib/google_crc32c/_crc32c.cpython-37m-x86_64-linux-gnu.so`
-* `lib/grpc/_cython/cygrpc.cpython-37m-x86_64-linux-gnu.so`
+* `lib/_cffi_backend.cpython-39-x86_64-linux-gnu.so`
+* `lib/_cffi_backend.cpython-313-x86_64-linux-gnu.so`
+* `lib/cryptography/hazmat/bindings/_rust.abi3.so`
+
+These are x86_64-only: `cryptography` (needed for service-account JWT signing) and its
+`cffi` dependency have no pure-Python fallback, unlike the rest of the vendored stack.

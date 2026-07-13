@@ -17,7 +17,8 @@ import collections
 
 
 _ProtoModule = collections.namedtuple(
-    "ProtoModule", ["package", "marshal", "manifest"],
+    "ProtoModule",
+    ["package", "marshal", "manifest"],
 )
 
 
@@ -33,13 +34,17 @@ def define_module(
         package (str): The proto package name.
         marshal (str): The name of the marshal to use. It is recommended
             to use one marshal per Python library (e.g. package on PyPI).
-        manifest (Tuple[str]): A tuple of classes to be created. Setting
+        manifest (Set[str]): A set of messages and enums to be created. Setting
             this adds a slight efficiency in piecing together proto
             descriptors under the hood.
     """
     if not marshal:
         marshal = package
-    return _ProtoModule(package=package, marshal=marshal, manifest=frozenset(manifest),)
+    return _ProtoModule(
+        package=package,
+        marshal=marshal,
+        manifest=frozenset(manifest),
+    )
 
 
 __all__ = ("define_module",)

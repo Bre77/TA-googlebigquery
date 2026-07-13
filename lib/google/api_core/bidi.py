@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bi-directional streaming RPC helpers."""
+"""Helpers for synchronous bidirectional streaming RPCs."""
 
 import collections
 import datetime
 import logging
+import queue as queue_module
 import threading
 import time
 
-from six.moves import queue
-
 from google.api_core import exceptions
+from google.api_core.bidi_base import BidiRpcBase
 
 _LOGGER = logging.getLogger(__name__)
 _BIDIRECTIONAL_CONSUMER_NAME = "Thread-ConsumeBidirectionalStream"
@@ -37,21 +37,6 @@ class _RequestQueueGenerator(object):
     otherwise open-ended set of requests to send through a request-streaming
     (or bidirectional) RPC.
 
-    The reason this is necessary is because gRPC takes an iterator as the
-    request for request-streaming RPCs. gRPC consumes this iterator in another
-    thread to allow it to block while generating requests for the stream.
-    However, if the generator blocks indefinitely gRPC will not be able to
-    clean up the thread as it'll be blocked on `next(iterator)` and not be able
-    to check the channel status to stop iterating. This helper mitigates that
-    by waiting on the queue with a timeout and checking the RPC state before
-    yielding.
-
-    Finally, it allows for retrying without swapping queues because if it does
-    pull an item off the queue when the RPC is inactive, it'll immediately put
-    it back and then exit. This is necessary because yielding the item in this
-    case will cause gRPC to discard it. In practice, this means that the order
-    of messages is not guaranteed. If such a thing is necessary it would be
-    easy to use a priority queue.
 
     Example::
 
@@ -63,15 +48,9 @@ class _RequestQueueGenerator(object):
             print(response)
             q.put(...)
 
-    Note that it is possible to accomplish this behavior without "spinning"
-    (using a queue timeout). One possible way would be to use more threads to
-    multiplex the grpc end event with the queue, another possible way is to
-    use selectors and a custom event/queue object. Both of these approaches
-    are significant from an engineering perspective for small benefit - the
-    CPU consumed by spinning is pretty minuscule.
 
     Args:
-        queue (queue.Queue): The request queue.
+        queue (queue_module.Queue): The request queue.
         period (float): The number of seconds to wait for items from the queue
             before checking if the RPC is cancelled. In practice, this
             determines the maximum amount of time the request consumption
@@ -92,13 +71,36 @@ class _RequestQueueGenerator(object):
     def _is_active(self):
         # Note: there is a possibility that this starts *before* the call
         # property is set. So we have to check if self.call is set before
-        # seeing if it's active.
-        if self.call is not None and not self.call.is_active():
-            return False
-        else:
-            return True
+        # seeing if it's active. We need to return True if self.call is None.
+        # See https://github.com/googleapis/python-api-core/issues/560.
+        return self.call is None or self.call.is_active()
 
     def __iter__(self):
+        # The reason this is necessary is because gRPC takes an iterator as the
+        # request for request-streaming RPCs. gRPC consumes this iterator in
+        # another thread to allow it to block while generating requests for
+        # the stream. However, if the generator blocks indefinitely gRPC will
+        # not be able to clean up the thread as it'll be blocked on
+        # `next(iterator)` and not be able to check the channel status to stop
+        # iterating. This helper mitigates that by waiting on the queue with
+        # a timeout and checking the RPC state before yielding.
+        #
+        # Finally, it allows for retrying without swapping queues because if
+        # it does pull an item off the queue when the RPC is inactive, it'll
+        # immediately put it back and then exit. This is necessary because
+        # yielding the item in this case will cause gRPC to discard it. In
+        # practice, this means that the order of messages is not guaranteed.
+        # If such a thing is necessary it would be easy to use a priority
+        # queue.
+        #
+        # Note that it is possible to accomplish this behavior without
+        # "spinning" (using a queue timeout). One possible way would be to use
+        # more threads to multiplex the grpc end event with the queue, another
+        # possible way is to use selectors and a custom event/queue object.
+        # Both of these approaches are significant from an engineering
+        # perspective for small benefit - the CPU consumed by spinning is
+        # pretty minuscule.
+
         if self._initial_request is not None:
             if callable(self._initial_request):
                 yield self._initial_request()
@@ -108,7 +110,7 @@ class _RequestQueueGenerator(object):
         while True:
             try:
                 item = self._queue.get(timeout=self._period)
-            except queue.Empty:
+            except queue_module.Empty:
                 if not self._is_active():
                     _LOGGER.debug(
                         "Empty queue and inactive call, exiting request " "generator."
@@ -204,7 +206,7 @@ class _Throttle(object):
         )
 
 
-class BidiRpc(object):
+class BidiRpc(BidiRpcBase):
     """A helper for consuming a bi-directional streaming RPC.
 
     This maps gRPC's built-in interface which uses a request iterator and a
@@ -230,6 +232,8 @@ class BidiRpc(object):
             rpc.send(example_pb2.StreamingRpcRequest(
                 data='example'))
 
+        rpc.close()
+
     This does *not* retry the stream on errors. See :class:`ResumableBidiRpc`.
 
     Args:
@@ -243,41 +247,25 @@ class BidiRpc(object):
             the request.
     """
 
-    def __init__(self, start_rpc, initial_request=None, metadata=None):
-        self._start_rpc = start_rpc
-        self._initial_request = initial_request
-        self._rpc_metadata = metadata
-        self._request_queue = queue.Queue()
-        self._request_generator = None
-        self._is_active = False
-        self._callbacks = []
-        self.call = None
-
-    def add_done_callback(self, callback):
-        """Adds a callback that will be called when the RPC terminates.
-
-        This occurs when the RPC errors or is successfully terminated.
-
-        Args:
-            callback (Callable[[grpc.Future], None]): The callback to execute.
-                It will be provided with the same gRPC future as the underlying
-                stream which will also be a :class:`grpc.Call`.
-        """
-        self._callbacks.append(callback)
-
-    def _on_call_done(self, future):
-        for callback in self._callbacks:
-            callback(future)
+    def _create_queue(self):
+        """Create a queue for requests."""
+        return queue_module.Queue()
 
     def open(self):
         """Opens the stream."""
         if self.is_active:
-            raise ValueError("Can not open an already open stream.")
+            raise ValueError("Cannot open an already open stream.")
 
         request_generator = _RequestQueueGenerator(
             self._request_queue, initial_request=self._initial_request
         )
-        call = self._start_rpc(iter(request_generator), metadata=self._rpc_metadata)
+        try:
+            call = self._start_rpc(iter(request_generator), metadata=self._rpc_metadata)
+        except exceptions.GoogleAPICallError as exc:
+            # The original `grpc.RpcError` (which is usually also a `grpc.Call`) is
+            # available from the ``response`` property on the mapped exception.
+            self._on_call_done(exc.response)
+            raise
 
         request_generator.call = call
 
@@ -293,12 +281,14 @@ class BidiRpc(object):
 
     def close(self):
         """Closes the stream."""
-        if self.call is None:
-            return
+        if self.call is not None:
+            self.call.cancel()
 
+        # Put None in request queue to signal termination.
         self._request_queue.put(None)
-        self.call.cancel()
         self._request_generator = None
+        self._initial_request = None
+        self._callbacks = []
         # Don't set self.call to None. Keep it around so that send/recv can
         # raise the error.
 
@@ -313,7 +303,7 @@ class BidiRpc(object):
             request (protobuf.Message): The request to send.
         """
         if self.call is None:
-            raise ValueError("Can not send() on an RPC that has never been open()ed.")
+            raise ValueError("Cannot send on an RPC stream that has never been opened.")
 
         # Don't use self.is_active(), as ResumableBidiRpc will overload it
         # to mean something semantically different.
@@ -334,19 +324,14 @@ class BidiRpc(object):
             protobuf.Message: The received message.
         """
         if self.call is None:
-            raise ValueError("Can not recv() on an RPC that has never been open()ed.")
+            raise ValueError("Cannot recv on an RPC stream that has never been opened.")
 
         return next(self.call)
 
     @property
     def is_active(self):
-        """bool: True if this stream is currently open and active."""
+        """True if this stream is currently open and active."""
         return self.call is not None and self.call.is_active()
-
-    @property
-    def pending_requests(self):
-        """int: Returns an estimate of the number of queued requests."""
-        return self._request_queue.qsize()
 
 
 def _never_terminate(future_or_error):
@@ -365,7 +350,7 @@ class ResumableBidiRpc(BidiRpc):
         def should_recover(exc):
             return (
                 isinstance(exc, grpc.RpcError) and
-                exc.code() == grpc.StatusCode.UNVAILABLE)
+                exc.code() == grpc.StatusCode.UNAVAILABLE)
 
         initial_request = example_pb2.StreamingRpcRequest(
             setting='example')
@@ -535,7 +520,7 @@ class ResumableBidiRpc(BidiRpc):
             call = self.call
 
         if call is None:
-            raise ValueError("Can not send() on an RPC that has never been open()ed.")
+            raise ValueError("Cannot send on an RPC that has never been opened.")
 
         # Don't use self.is_active(), as ResumableBidiRpc will overload it
         # to mean something semantically different.
@@ -554,7 +539,7 @@ class ResumableBidiRpc(BidiRpc):
             call = self.call
 
         if call is None:
-            raise ValueError("Can not recv() on an RPC that has never been open()ed.")
+            raise ValueError("Cannot recv on an RPC that has never been opened.")
 
         return next(call)
 
@@ -590,7 +575,7 @@ class BackgroundConsumer(object):
         def should_recover(exc):
             return (
                 isinstance(exc, grpc.RpcError) and
-                exc.code() == grpc.StatusCode.UNVAILABLE)
+                exc.code() == grpc.StatusCode.UNAVAILABLE)
 
         initial_request = example_pb2.StreamingRpcRequest(
             setting='example')
@@ -615,12 +600,15 @@ class BackgroundConsumer(object):
             ``open()``ed yet.
         on_response (Callable[[protobuf.Message], None]): The callback to
             be called for every response on the stream.
+        on_fatal_exception (Callable[[Exception], None]): The callback to
+            be called on fatal errors during consumption. Default None.
     """
 
-    def __init__(self, bidi_rpc, on_response):
+    def __init__(self, bidi_rpc, on_response, on_fatal_exception=None):
         self._bidi_rpc = bidi_rpc
         self._on_response = on_response
         self._paused = False
+        self._on_fatal_exception = on_fatal_exception
         self._wake = threading.Condition()
         self._thread = None
         self._operational_lock = threading.Lock()
@@ -645,6 +633,7 @@ class BackgroundConsumer(object):
                 # Keeping the lock throughout avoids that.
                 # In the future, we could use `Condition.wait_for` if we drop
                 # Python 2.7.
+                # See: https://github.com/googleapis/python-api-core/issues/211
                 with self._wake:
                     while self._paused:
                         _LOGGER.debug("paused, waiting for waking.")
@@ -654,7 +643,8 @@ class BackgroundConsumer(object):
                 _LOGGER.debug("waiting for recv.")
                 response = self._bidi_rpc.recv()
                 _LOGGER.debug("recved response.")
-                self._on_response(response)
+                if self._on_response is not None:
+                    self._on_response(response)
 
         except exceptions.GoogleAPICallError as exc:
             _LOGGER.debug(
@@ -665,6 +655,8 @@ class BackgroundConsumer(object):
                 exc,
                 exc_info=True,
             )
+            if self._on_fatal_exception is not None:
+                self._on_fatal_exception(exc)
 
         except Exception as exc:
             _LOGGER.exception(
@@ -672,6 +664,8 @@ class BackgroundConsumer(object):
                 _BIDIRECTIONAL_CONSUMER_NAME,
                 exc,
             )
+            if self._on_fatal_exception is not None:
+                self._on_fatal_exception(exc)
 
         _LOGGER.info("%s exiting", _BIDIRECTIONAL_CONSUMER_NAME)
 
@@ -683,8 +677,8 @@ class BackgroundConsumer(object):
                 name=_BIDIRECTIONAL_CONSUMER_NAME,
                 target=self._thread_main,
                 args=(ready,),
+                daemon=True,
             )
-            thread.daemon = True
             thread.start()
             # Other parts of the code rely on `thread.is_alive` which
             # isn't sufficient to know if a thread is active, just that it may
@@ -695,7 +689,11 @@ class BackgroundConsumer(object):
             _LOGGER.debug("Started helper thread %s", thread.name)
 
     def stop(self):
-        """Stop consuming the stream and shutdown the background thread."""
+        """Stop consuming the stream and shutdown the background thread.
+
+        NOTE: Cannot be called within `_thread_main`, since it is not
+        possible to join a thread to itself.
+        """
         with self._operational_lock:
             self._bidi_rpc.close()
 
@@ -709,6 +707,8 @@ class BackgroundConsumer(object):
                     _LOGGER.warning("Background thread did not exit.")
 
             self._thread = None
+            self._on_response = None
+            self._on_fatal_exception = None
 
     @property
     def is_active(self):
@@ -727,7 +727,7 @@ class BackgroundConsumer(object):
         """Resumes the response stream."""
         with self._wake:
             self._paused = False
-            self._wake.notifyAll()
+            self._wake.notify_all()
 
     @property
     def is_paused(self):

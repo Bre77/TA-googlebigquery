@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-
-# Copyright 2020 Google LLC
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,13 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
 import proto  # type: ignore
 
 
 __protobuf__ = proto.module(
     package="google.cloud.bigquery.v2",
-    manifest={"StandardSqlDataType", "StandardSqlField", "StandardSqlStructType",},
+    manifest={
+        "StandardSqlDataType",
+        "StandardSqlField",
+        "StandardSqlStructType",
+        "StandardSqlTableType",
+    },
 )
 
 
@@ -32,16 +35,27 @@ class StandardSqlDataType(proto.Message):
     type={type_kind="STRING"}}, {name="y", type={type_kind="ARRAY",
     array_element_type="DATE"}} ]}}
 
+    This message has `oneof`_ fields (mutually exclusive fields).
+    For each oneof, at most one member field can be set at the same time.
+    Setting any member of the oneof automatically clears all other
+    members.
+
+    .. _oneof: https://proto-plus-python.readthedocs.io/en/stable/fields.html#oneofs-mutually-exclusive-fields
+
     Attributes:
-        type_kind (~.standard_sql.StandardSqlDataType.TypeKind):
+        type_kind (google.cloud.bigquery_v2.types.StandardSqlDataType.TypeKind):
             Required. The top level type of this field.
             Can be any standard SQL data type (e.g.,
             "INT64", "DATE", "ARRAY").
-        array_element_type (~.standard_sql.StandardSqlDataType):
+        array_element_type (google.cloud.bigquery_v2.types.StandardSqlDataType):
             The type of the array's elements, if type_kind = "ARRAY".
-        struct_type (~.standard_sql.StandardSqlStructType):
+
+            This field is a member of `oneof`_ ``sub_type``.
+        struct_type (google.cloud.bigquery_v2.types.StandardSqlStructType):
             The fields of this struct, in order, if type_kind =
             "STRUCT".
+
+            This field is a member of `oneof`_ ``sub_type``.
     """
 
     class TypeKind(proto.Enum):
@@ -56,20 +70,30 @@ class StandardSqlDataType(proto.Message):
         DATE = 10
         TIME = 20
         DATETIME = 21
+        INTERVAL = 26
         GEOGRAPHY = 22
         NUMERIC = 23
         BIGNUMERIC = 24
+        JSON = 25
         ARRAY = 16
         STRUCT = 17
 
-    type_kind = proto.Field(proto.ENUM, number=1, enum=TypeKind,)
-
-    array_element_type = proto.Field(
-        proto.MESSAGE, number=2, oneof="sub_type", message="StandardSqlDataType",
+    type_kind = proto.Field(
+        proto.ENUM,
+        number=1,
+        enum=TypeKind,
     )
-
+    array_element_type = proto.Field(
+        proto.MESSAGE,
+        number=2,
+        oneof="sub_type",
+        message="StandardSqlDataType",
+    )
     struct_type = proto.Field(
-        proto.MESSAGE, number=3, oneof="sub_type", message="StandardSqlStructType",
+        proto.MESSAGE,
+        number=3,
+        oneof="sub_type",
+        message="StandardSqlStructType",
     )
 
 
@@ -80,7 +104,7 @@ class StandardSqlField(proto.Message):
         name (str):
             Optional. The name of this field. Can be
             absent for struct fields.
-        type (~.standard_sql.StandardSqlDataType):
+        type (google.cloud.bigquery_v2.types.StandardSqlDataType):
             Optional. The type of this parameter. Absent
             if not explicitly specified (e.g., CREATE
             FUNCTION statement can omit the return type; in
@@ -88,20 +112,45 @@ class StandardSqlField(proto.Message):
             this "type" field).
     """
 
-    name = proto.Field(proto.STRING, number=1)
-
-    type = proto.Field(proto.MESSAGE, number=2, message="StandardSqlDataType",)
+    name = proto.Field(
+        proto.STRING,
+        number=1,
+    )
+    type = proto.Field(
+        proto.MESSAGE,
+        number=2,
+        message="StandardSqlDataType",
+    )
 
 
 class StandardSqlStructType(proto.Message):
     r"""
 
     Attributes:
-        fields (Sequence[~.standard_sql.StandardSqlField]):
+        fields (Sequence[google.cloud.bigquery_v2.types.StandardSqlField]):
 
     """
 
-    fields = proto.RepeatedField(proto.MESSAGE, number=1, message="StandardSqlField",)
+    fields = proto.RepeatedField(
+        proto.MESSAGE,
+        number=1,
+        message="StandardSqlField",
+    )
+
+
+class StandardSqlTableType(proto.Message):
+    r"""A table type
+
+    Attributes:
+        columns (Sequence[google.cloud.bigquery_v2.types.StandardSqlField]):
+            The columns in this table type
+    """
+
+    columns = proto.RepeatedField(
+        proto.MESSAGE,
+        number=1,
+        message="StandardSqlField",
+    )
 
 
 __all__ = tuple(sorted(__protobuf__.manifest))

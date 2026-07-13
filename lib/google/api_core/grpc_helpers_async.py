@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""AsyncIO helpers for :mod:`grpc` supporting 3.6+.
+"""AsyncIO helpers for :mod:`grpc` supporting 3.7+.
 
 Please combine more detailed docstring in grpc_helpers.py to use following
 functions. This module is implementing the same surface with AsyncIO semantics.
@@ -20,15 +20,17 @@ functions. This module is implementing the same surface with AsyncIO semantics.
 
 import asyncio
 import functools
+import warnings
+
+from typing import AsyncGenerator, Generic, Iterator, Optional, TypeVar
 
 import grpc
-from grpc.experimental import aio
+from grpc import aio
 
-from google.api_core import exceptions, grpc_helpers
+from google.api_core import exceptions, general_helpers, grpc_helpers
 
-
-# TODO(lidiz) Support gRPC GCP wrapper
-HAS_GRPC_GCP = False
+# denotes the proto response type for grpc calls
+P = TypeVar("P")
 
 # NOTE(lidiz) Alternatively, we can hack "__getattribute__" to perform
 # automatic patching for us. But that means the overhead of creating an
@@ -36,7 +38,6 @@ HAS_GRPC_GCP = False
 
 
 class _WrappedCall(aio.Call):
-
     def __init__(self):
         self._call = None
 
@@ -79,9 +80,8 @@ class _WrappedCall(aio.Call):
             raise exceptions.from_grpc_error(rpc_error) from rpc_error
 
 
-class _WrappedUnaryResponseMixin(_WrappedCall):
-
-    def __await__(self):
+class _WrappedUnaryResponseMixin(Generic[P], _WrappedCall):
+    def __await__(self) -> Iterator[P]:
         try:
             response = yield from self._call.__await__()
             return response
@@ -89,18 +89,17 @@ class _WrappedUnaryResponseMixin(_WrappedCall):
             raise exceptions.from_grpc_error(rpc_error) from rpc_error
 
 
-class _WrappedStreamResponseMixin(_WrappedCall):
-
+class _WrappedStreamResponseMixin(Generic[P], _WrappedCall):
     def __init__(self):
         self._wrapped_async_generator = None
 
-    async def read(self):
+    async def read(self) -> P:
         try:
             return await self._call.read()
         except grpc.RpcError as rpc_error:
             raise exceptions.from_grpc_error(rpc_error) from rpc_error
 
-    async def _wrapped_aiter(self):
+    async def _wrapped_aiter(self) -> AsyncGenerator[P, None]:
         try:
             # NOTE(lidiz) coverage doesn't understand the exception raised from
             # __anext__ method. It is covered by test case:
@@ -110,14 +109,13 @@ class _WrappedStreamResponseMixin(_WrappedCall):
         except grpc.RpcError as rpc_error:
             raise exceptions.from_grpc_error(rpc_error) from rpc_error
 
-    def __aiter__(self):
+    def __aiter__(self) -> AsyncGenerator[P, None]:
         if not self._wrapped_async_generator:
             self._wrapped_async_generator = self._wrapped_aiter()
         return self._wrapped_async_generator
 
 
 class _WrappedStreamRequestMixin(_WrappedCall):
-
     async def write(self, request):
         try:
             await self._call.write(request)
@@ -134,25 +132,34 @@ class _WrappedStreamRequestMixin(_WrappedCall):
 # NOTE(lidiz) Implementing each individual class separately, so we don't
 # expose any API that should not be seen. E.g., __aiter__ in unary-unary
 # RPC, or __await__ in stream-stream RPC.
-class _WrappedUnaryUnaryCall(_WrappedUnaryResponseMixin, aio.UnaryUnaryCall):
+class _WrappedUnaryUnaryCall(_WrappedUnaryResponseMixin[P], aio.UnaryUnaryCall):
     """Wrapped UnaryUnaryCall to map exceptions."""
 
 
-class _WrappedUnaryStreamCall(_WrappedStreamResponseMixin, aio.UnaryStreamCall):
+class _WrappedUnaryStreamCall(_WrappedStreamResponseMixin[P], aio.UnaryStreamCall):
     """Wrapped UnaryStreamCall to map exceptions."""
 
 
-class _WrappedStreamUnaryCall(_WrappedUnaryResponseMixin, _WrappedStreamRequestMixin, aio.StreamUnaryCall):
+class _WrappedStreamUnaryCall(
+    _WrappedUnaryResponseMixin[P], _WrappedStreamRequestMixin, aio.StreamUnaryCall
+):
     """Wrapped StreamUnaryCall to map exceptions."""
 
 
-class _WrappedStreamStreamCall(_WrappedStreamRequestMixin, _WrappedStreamResponseMixin, aio.StreamStreamCall):
+class _WrappedStreamStreamCall(
+    _WrappedStreamRequestMixin, _WrappedStreamResponseMixin[P], aio.StreamStreamCall
+):
     """Wrapped StreamStreamCall to map exceptions."""
+
+
+# public type alias denoting the return type of async streaming gapic calls
+GrpcAsyncStream = _WrappedStreamResponseMixin
+# public type alias denoting the return type of unary gapic calls
+AwaitableGrpcCall = _WrappedUnaryResponseMixin
 
 
 def _wrap_unary_errors(callable_):
     """Map errors for Unary-Unary async callables."""
-    grpc_helpers._patch_callable_name(callable_)
 
     @functools.wraps(callable_)
     def error_remapped_callable(*args, **kwargs):
@@ -162,23 +169,13 @@ def _wrap_unary_errors(callable_):
     return error_remapped_callable
 
 
-def _wrap_stream_errors(callable_):
+def _wrap_stream_errors(callable_, wrapper_type):
     """Map errors for streaming RPC async callables."""
-    grpc_helpers._patch_callable_name(callable_)
 
     @functools.wraps(callable_)
     async def error_remapped_callable(*args, **kwargs):
         call = callable_(*args, **kwargs)
-
-        if isinstance(call, aio.UnaryStreamCall):
-            call = _WrappedUnaryStreamCall().with_call(call)
-        elif isinstance(call, aio.StreamUnaryCall):
-            call = _WrappedStreamUnaryCall().with_call(call)
-        elif isinstance(call, aio.StreamStreamCall):
-            call = _WrappedStreamStreamCall().with_call(call)
-        else:
-            raise TypeError('Unexpected type of call %s' % type(call))
-
+        call = wrapper_type().with_call(call)
         await call.wait_for_connection()
         return call
 
@@ -200,20 +197,31 @@ def wrap_errors(callable_):
 
     Returns: Callable: The wrapped gRPC callable.
     """
-    if isinstance(callable_, aio.UnaryUnaryMultiCallable):
-        return _wrap_unary_errors(callable_)
+    grpc_helpers._patch_callable_name(callable_)
+
+    if isinstance(callable_, aio.UnaryStreamMultiCallable):
+        return _wrap_stream_errors(callable_, _WrappedUnaryStreamCall)
+    elif isinstance(callable_, aio.StreamUnaryMultiCallable):
+        return _wrap_stream_errors(callable_, _WrappedStreamUnaryCall)
+    elif isinstance(callable_, aio.StreamStreamMultiCallable):
+        return _wrap_stream_errors(callable_, _WrappedStreamStreamCall)
     else:
-        return _wrap_stream_errors(callable_)
+        return _wrap_unary_errors(callable_)
 
 
 def create_channel(
-        target,
-        credentials=None,
-        scopes=None,
-        ssl_credentials=None,
-        credentials_file=None,
-        quota_project_id=None,
-        **kwargs):
+    target,
+    credentials=None,
+    scopes=None,
+    ssl_credentials=None,
+    credentials_file=None,
+    quota_project_id=None,
+    default_scopes=None,
+    default_host=None,
+    compression=None,
+    attempt_direct_path: Optional[bool] = False,
+    **kwargs,
+):
     """Create an AsyncIO secure channel with credentials.
 
     Args:
@@ -226,10 +234,44 @@ def create_channel(
             are passed to :func:`google.auth.default`.
         ssl_credentials (grpc.ChannelCredentials): Optional SSL channel
             credentials. This can be used to specify different certificates.
-        credentials_file (str): A file with credentials that can be loaded with
+        credentials_file (str): Deprecated. A file with credentials that can be loaded with
             :func:`google.auth.load_credentials_from_file`. This argument is
-            mutually exclusive with credentials.
+            mutually exclusive with credentials. This argument will be
+            removed in the next major version of `google-api-core`.
+
+            .. warning::
+                Important: If you accept a credential configuration (credential JSON/File/Stream)
+                from an external source for authentication to Google Cloud Platform, you must
+                validate it before providing it to any Google API or client library. Providing an
+                unvalidated credential configuration to Google APIs or libraries can compromise
+                the security of your systems and data. For more information, refer to
+                `Validate credential configurations from external sources`_.
+
+            .. _Validate credential configurations from external sources:
+
+            https://cloud.google.com/docs/authentication/external/externally-sourced-credentials
         quota_project_id (str): An optional project to use for billing and quota.
+        default_scopes (Sequence[str]): Default scopes passed by a Google client
+            library. Use 'scopes' for user-defined scopes.
+        default_host (str): The default endpoint. e.g., "pubsub.googleapis.com".
+        compression (grpc.Compression): An optional value indicating the
+            compression method to be used over the lifetime of the channel.
+        attempt_direct_path (Optional[bool]): If set, Direct Path will be attempted
+            when the request is made. Direct Path is only available within a Google
+            Compute Engine (GCE) environment and provides a proxyless connection
+            which increases the available throughput, reduces latency, and increases
+            reliability. Note:
+
+            - This argument should only be set in a GCE environment and for Services
+              that are known to support Direct Path.
+            - If this argument is set outside of GCE, then this request will fail
+              unless the back-end service happens to have configured fall-back to DNS.
+            - If the request causes a `ServiceUnavailable` response, it is recommended
+              that the client repeat the request with `attempt_direct_path` set to
+              `False` as the Service may not support Direct Path.
+            - Using `ssl_credentials` with `attempt_direct_path` set to `True` will
+              result in `ValueError` as this combination  is not yet supported.
+
         kwargs: Additional key-word args passed to :func:`aio.secure_channel`.
 
     Returns:
@@ -237,17 +279,34 @@ def create_channel(
 
     Raises:
         google.api_core.DuplicateCredentialArgs: If both a credentials object and credentials_file are passed.
+        ValueError: If `ssl_credentials` is set and `attempt_direct_path` is set to `True`.
     """
+
+    if credentials_file is not None:
+        warnings.warn(general_helpers._CREDENTIALS_FILE_WARNING, DeprecationWarning)
+
+    # If `ssl_credentials` is set and `attempt_direct_path` is set to `True`,
+    # raise ValueError as this is not yet supported.
+    # See https://github.com/googleapis/python-api-core/issues/590
+    if ssl_credentials and attempt_direct_path:
+        raise ValueError("Using ssl_credentials with Direct Path is not supported")
 
     composite_credentials = grpc_helpers._create_composite_credentials(
         credentials=credentials,
         credentials_file=credentials_file,
         scopes=scopes,
+        default_scopes=default_scopes,
         ssl_credentials=ssl_credentials,
         quota_project_id=quota_project_id,
+        default_host=default_host,
     )
 
-    return aio.secure_channel(target, composite_credentials, **kwargs)
+    if attempt_direct_path:
+        target = grpc_helpers._modify_target_for_direct_path(target)
+
+    return aio.secure_channel(
+        target, composite_credentials, compression=compression, **kwargs
+    )
 
 
 class FakeUnaryUnaryCall(_WrappedUnaryUnaryCall):
