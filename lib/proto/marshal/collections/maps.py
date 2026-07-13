@@ -58,7 +58,6 @@ class MapComposite(collections.abc.MutableMapping):
 
     def __setitem__(self, key, value):
         pb_value = self._marshal.to_proto(self._pb_type, value, strict=True)
-
         # Directly setting a key is not allowed; however, protocol buffers
         # is so permissive that querying for the existence of a key will in
         # of itself create it.

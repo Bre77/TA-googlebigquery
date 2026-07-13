@@ -22,14 +22,19 @@ from __future__ import absolute_import
 
 import asyncio
 import functools
+import logging
 
-import aiohttp
-import six
-import urllib3
+import aiohttp  # type: ignore
+import urllib3  # type: ignore
 
+from google.auth import _helpers
 from google.auth import exceptions
 from google.auth import transport
+from google.auth.aio import _helpers as _helpers_async
 from google.auth.transport import requests
+
+
+_LOGGER = logging.getLogger(__name__)
 
 # Timeout can be re-defined depending on async requirement. Currently made 60s more than
 # sync timeout.
@@ -131,14 +136,19 @@ class Request(transport.Request):
         credentials.refresh(request)
 
     Args:
-        session (aiohttp.ClientSession): An instance :class: aiohttp.ClientSession used
+        session (aiohttp.ClientSession): An instance :class:`aiohttp.ClientSession` used
             to make HTTP requests. If not specified, a session will be created.
 
     .. automethod:: __call__
     """
 
     def __init__(self, session=None):
-        self.session = None
+        # TODO: Use auto_decompress property for aiohttp 3.7+
+        if session is not None and session._auto_decompress:
+            raise exceptions.InvalidOperation(
+                "Client sessions with auto_decompress=True are not supported."
+            )
+        self.session = session
 
     async def __call__(
         self,
@@ -154,15 +164,17 @@ class Request(transport.Request):
 
         Args:
             url (str): The URL to be requested.
-            method (str): The HTTP method to use for the request. Defaults
-                to 'GET'.
-            body (bytes): The payload / body in HTTP request.
-            headers (Mapping[str, str]): Request headers.
+            method (Optional[str]):
+                The HTTP method to use for the request. Defaults to 'GET'.
+            body (Optional[bytes]):
+                The payload or body in HTTP request.
+            headers (Optional[Mapping[str, str]]):
+                Request headers.
             timeout (Optional[int]): The number of seconds to wait for a
                 response from the server. If not specified or if None, the
                 requests default timeout will be used.
             kwargs: Additional arguments passed through to the underlying
-                requests :meth:`~requests.Session.request` method.
+                requests :meth:`requests.Session.request` method.
 
         Returns:
             google.auth.transport.Response: The HTTP response.
@@ -176,19 +188,20 @@ class Request(transport.Request):
                 self.session = aiohttp.ClientSession(
                     auto_decompress=False
                 )  # pragma: NO COVER
-            requests._LOGGER.debug("Making request: %s %s", method, url)
+            _helpers.request_log(_LOGGER, method, url, body, headers)
             response = await self.session.request(
                 method, url, data=body, headers=headers, timeout=timeout, **kwargs
             )
+            await _helpers_async.response_log_async(_LOGGER, response)
             return _CombinedResponse(response)
 
         except aiohttp.ClientError as caught_exc:
             new_exc = exceptions.TransportError(caught_exc)
-            six.raise_from(new_exc, caught_exc)
+            raise new_exc from caught_exc
 
         except asyncio.TimeoutError as caught_exc:
             new_exc = exceptions.TransportError(caught_exc)
-            six.raise_from(new_exc, caught_exc)
+            raise new_exc from caught_exc
 
 
 class AuthorizedSession(aiohttp.ClientSession):
@@ -211,8 +224,8 @@ class AuthorizedSession(aiohttp.ClientSession):
     credentials' headers to the request and refreshing credentials as needed.
 
     Args:
-        credentials (google.auth._credentials_async.Credentials): The credentials to
-            add to the request.
+        credentials (google.auth._credentials_async.Credentials):
+            The credentials to add to the request.
         refresh_status_codes (Sequence[int]): Which HTTP status codes indicate
             that credentials should be refreshed and the request should be
             retried.
@@ -226,6 +239,8 @@ class AuthorizedSession(aiohttp.ClientSession):
             refreshing credentials. If not passed,
             an instance of :class:`~google.auth.transport.aiohttp_requests.Request`
             is created.
+        kwargs: Additional arguments passed through to the underlying
+            ClientSession :meth:`aiohttp.ClientSession` object.
     """
 
     def __init__(
@@ -236,8 +251,9 @@ class AuthorizedSession(aiohttp.ClientSession):
         refresh_timeout=None,
         auth_request=None,
         auto_decompress=False,
+        **kwargs,
     ):
-        super(AuthorizedSession, self).__init__()
+        super(AuthorizedSession, self).__init__(**kwargs)
         self.credentials = credentials
         self._refresh_status_codes = refresh_status_codes
         self._max_refresh_attempts = max_refresh_attempts
@@ -260,36 +276,32 @@ class AuthorizedSession(aiohttp.ClientSession):
         auto_decompress=False,
         **kwargs,
     ):
-
         """Implementation of Authorized Session aiohttp request.
 
         Args:
-            method: The http request method used (e.g. GET, PUT, DELETE)
-
-            url: The url at which the http request is sent.
-
-            data, headers: These fields parallel the associated data and headers
-            fields of a regular http request. Using the aiohttp client session to
-            send the http request allows us to use this parallel corresponding structure
-            in our Authorized Session class.
-
+            method (str):
+                The http request method used (e.g. GET, PUT, DELETE)
+            url (str):
+                The url at which the http request is sent.
+            data (Optional[dict]): Dictionary, list of tuples, bytes, or file-like
+                object to send in the body of the Request.
+            headers (Optional[dict]): Dictionary of HTTP Headers to send with the
+                Request.
             timeout (Optional[Union[float, aiohttp.ClientTimeout]]):
                 The amount of time in seconds to wait for the server response
-                with each individual request.
-
-                Can also be passed as an `aiohttp.ClientTimeout` object.
-
+                with each individual request. Can also be passed as an
+                ``aiohttp.ClientTimeout`` object.
             max_allowed_time (Optional[float]):
                 If the method runs longer than this, a ``Timeout`` exception is
-                automatically raised. Unlike the ``timeout` parameter, this
+                automatically raised. Unlike the ``timeout`` parameter, this
                 value applies to the total method execution time, even if
                 multiple requests are made under the hood.
 
                 Mind that it is not guaranteed that the timeout error is raised
-                at ``max_allowed_time`. It might take longer, for example, if
+                at ``max_allowed_time``. It might take longer, for example, if
                 an underlying request takes a lot of time, but the request
                 itself does not timeout, e.g. if a large file is being
-                transmitted. The timout error will be raised after such
+                transmitted. The timeout error will be raised after such
                 request completes.
         """
         # Headers come in as bytes which isn't expected behavior, the resumable
@@ -301,7 +313,8 @@ class AuthorizedSession(aiohttp.ClientSession):
                     headers[key] = headers[key].decode("utf-8")
 
         async with aiohttp.ClientSession(
-            auto_decompress=self._auto_decompress
+            auto_decompress=self._auto_decompress,
+            trust_env=kwargs.get("trust_env", False),
         ) as self._auth_request_session:
             auth_request = Request(self._auth_request_session)
             self._auth_request = auth_request
@@ -344,7 +357,6 @@ class AuthorizedSession(aiohttp.ClientSession):
                 response.status in self._refresh_status_codes
                 and _credential_refresh_attempt < self._max_refresh_attempts
             ):
-
                 requests._LOGGER.info(
                     "Refreshing credentials due to a %s response. Attempt %s/%s.",
                     response.status,

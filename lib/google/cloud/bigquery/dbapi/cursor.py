@@ -14,20 +14,26 @@
 
 """Cursor for the Google BigQuery DB-API."""
 
+from __future__ import annotations
+
 import collections
 from collections import abc as collections_abc
-import copy
-import logging
+import re
+from typing import Optional
 
-import six
+try:
+    from google.cloud.bigquery_storage import ArrowSerializationOptions
+except ImportError:
+    _ARROW_COMPRESSION_SUPPORT = False
+else:
+    # Having BQ Storage available implies that pyarrow >=1.0.0 is available, too.
+    _ARROW_COMPRESSION_SUPPORT = True
 
 from google.cloud.bigquery import job
 from google.cloud.bigquery.dbapi import _helpers
 from google.cloud.bigquery.dbapi import exceptions
-import google.cloud.exceptions
+import google.cloud.exceptions  # type: ignore
 
-
-_LOGGER = logging.getLogger(__name__)
 
 # Per PEP 249: A 7-item sequence containing information describing one result
 # column. The first two items (name and type_code) are mandatory, the other
@@ -69,8 +75,31 @@ class Cursor(object):
         # most appropriate size.
         self.arraysize = None
         self._query_data = None
-        self._query_job = None
+        self._query_rows = None
         self._closed = False
+
+    @property
+    def query_job(self) -> Optional[job.QueryJob]:
+        """google.cloud.bigquery.job.query.QueryJob | None: The query job
+        created by the last ``execute*()`` call, if a query job was created.
+
+        .. note::
+            If the last ``execute*()`` call was ``executemany()``, this is the
+            last job created by ``executemany()``."""
+        rows = self._query_rows
+
+        if rows is None:
+            return None
+
+        job_id = rows.job_id
+        project = rows.project
+        location = rows.location
+        client = self.connection._client
+
+        if job_id is None:
+            return None
+
+        return client.get_job(job_id, location=location, project=project)
 
     def close(self):
         """Mark the cursor as closed, preventing its further use."""
@@ -100,8 +129,8 @@ class Cursor(object):
             for field in schema
         )
 
-    def _set_rowcount(self, query_results):
-        """Set the rowcount from query results.
+    def _set_rowcount(self, rows):
+        """Set the rowcount from a RowIterator.
 
         Normally, this sets rowcount to the number of rows returned by the
         query, but if it was a DML statement, it sets rowcount to the number
@@ -112,10 +141,10 @@ class Cursor(object):
                 Results of a query.
         """
         total_rows = 0
-        num_dml_affected_rows = query_results.num_dml_affected_rows
+        num_dml_affected_rows = rows.num_dml_affected_rows
 
-        if query_results.total_rows is not None and query_results.total_rows > 0:
-            total_rows = query_results.total_rows
+        if rows.total_rows is not None and rows.total_rows > 0:
+            total_rows = rows.total_rows
         if num_dml_affected_rows is not None and num_dml_affected_rows > 0:
             total_rows = num_dml_affected_rows
         self.rowcount = total_rows
@@ -148,51 +177,62 @@ class Cursor(object):
             parameters (Union[Mapping[str, Any], Sequence[Any]]):
                 (Optional) dictionary or sequence of parameter values.
 
-            job_id (str):
-                (Optional) The job_id to use. If not set, a job ID
-                is generated at random.
+            job_id (str | None):
+                (Optional and discouraged) The job ID to use when creating
+                the query job. For best performance and reliability, manually
+                setting a job ID is discouraged.
 
             job_config (google.cloud.bigquery.job.QueryJobConfig):
                 (Optional) Extra configuration options for the query job.
         """
+        formatted_operation, parameter_types = _format_operation(operation, parameters)
+        self._execute(
+            formatted_operation, parameters, job_id, job_config, parameter_types
+        )
+
+    def _execute(
+        self, formatted_operation, parameters, job_id, job_config, parameter_types
+    ):
         self._query_data = None
-        self._query_job = None
+        self._query_results = None
         client = self.connection._client
 
         # The DB-API uses the pyformat formatting, since the way BigQuery does
         # query parameters was not one of the standard options. Convert both
         # the query and the parameters to the format expected by the client
         # libraries.
-        formatted_operation = _format_operation(operation, parameters=parameters)
-        query_parameters = _helpers.to_query_parameters(parameters)
+        query_parameters = _helpers.to_query_parameters(parameters, parameter_types)
 
-        if client._default_query_job_config:
-            if job_config:
-                config = job_config._fill_from_default(client._default_query_job_config)
-            else:
-                config = copy.deepcopy(client._default_query_job_config)
-        else:
-            config = job_config or job.QueryJobConfig(use_legacy_sql=False)
-
+        config = job_config or job.QueryJobConfig()
         config.query_parameters = query_parameters
-        self._query_job = client.query(
-            formatted_operation, job_config=config, job_id=job_id
-        )
 
-        if self._query_job.dry_run:
-            self._set_description(schema=None)
-            self.rowcount = 0
-            return
-
-        # Wait for the query to finish.
+        # Start the query and wait for the query to finish.
         try:
-            self._query_job.result()
+            if job_id is not None:
+                rows = client.query(
+                    formatted_operation,
+                    job_config=job_config,
+                    job_id=job_id,
+                    job_retry=None,
+                ).result(
+                    page_size=self.arraysize,
+                )
+            else:
+                rows = client.query_and_wait(
+                    formatted_operation,
+                    job_config=config,
+                    page_size=self.arraysize,
+                )
         except google.cloud.exceptions.GoogleCloudError as exc:
             raise exceptions.DatabaseError(exc)
 
-        query_results = self._query_job._query_results
-        self._set_rowcount(query_results)
-        self._set_description(query_results.schema)
+        self._query_rows = rows
+        self._set_description(rows.schema)
+
+        if config.dry_run:
+            self.rowcount = 0
+        else:
+            self._set_rowcount(rows)
 
     def executemany(self, operation, seq_of_parameters):
         """Prepare and execute a database operation multiple times.
@@ -203,33 +243,49 @@ class Cursor(object):
             seq_of_parameters (Union[Sequence[Mapping[str, Any], Sequence[Any]]]):
                 Sequence of many sets of parameter values.
         """
-        for parameters in seq_of_parameters:
-            self.execute(operation, parameters)
+        if seq_of_parameters:
+            rowcount = 0
+            # There's no reason to format the line more than once, as
+            # the operation only barely depends on the parameters.  So
+            # we just use the first set of parameters. If there are
+            # different numbers or types of parameters, we'll error
+            # anyway.
+            formatted_operation, parameter_types = _format_operation(
+                operation, seq_of_parameters[0]
+            )
+            for parameters in seq_of_parameters:
+                self._execute(
+                    formatted_operation, parameters, None, None, parameter_types
+                )
+                rowcount += self.rowcount
+
+            self.rowcount = rowcount
 
     def _try_fetch(self, size=None):
         """Try to start fetching data, if not yet started.
 
         Mutates self to indicate that iteration has started.
         """
-        if self._query_job is None:
+        if self._query_data is not None:
+            # Already started fetching the data.
+            return
+
+        rows = self._query_rows
+        if rows is None:
             raise exceptions.InterfaceError(
                 "No query results: execute() must be called before fetch."
             )
 
-        if self._query_job.dry_run:
-            self._query_data = iter([])
+        bqstorage_client = self.connection._bqstorage_client
+        if rows._should_use_bqstorage(
+            bqstorage_client,
+            create_bqstorage_client=False,
+        ):
+            rows_iterable = self._bqstorage_fetch(bqstorage_client)
+            self._query_data = _helpers.to_bq_table_rows(rows_iterable)
             return
 
-        if self._query_data is None:
-            bqstorage_client = self.connection._bqstorage_client
-
-            if bqstorage_client is not None:
-                rows_iterable = self._bqstorage_fetch(bqstorage_client)
-                self._query_data = _helpers.to_bq_table_rows(rows_iterable)
-                return
-
-            rows_iter = self._query_job.result(page_size=self.arraysize)
-            self._query_data = iter(rows_iter)
+        self._query_data = iter(rows)
 
     def _bqstorage_fetch(self, bqstorage_client):
         """Start fetching data with the BigQuery Storage API.
@@ -251,17 +307,25 @@ class Cursor(object):
         # bigquery_storage can indeed be imported here without errors.
         from google.cloud import bigquery_storage
 
-        table_reference = self._query_job.destination
+        table_reference = self._query_rows._table
 
         requested_session = bigquery_storage.types.ReadSession(
             table=table_reference.to_bqstorage(),
             data_format=bigquery_storage.types.DataFormat.ARROW,
         )
+
+        if _ARROW_COMPRESSION_SUPPORT:
+            requested_session.read_options.arrow_serialization_options.buffer_compression = (
+                ArrowSerializationOptions.CompressionCodec.LZ4_FRAME
+            )
+
         read_session = bqstorage_client.create_read_session(
             parent="projects/{}".format(table_reference.project),
             read_session=requested_session,
             # a single stream only, as DB API is not well-suited for multithreading
             max_stream_count=1,
+            retry=None,
+            timeout=None,
         )
 
         if not read_session.streams:
@@ -289,7 +353,7 @@ class Cursor(object):
         """
         self._try_fetch()
         try:
-            return six.next(self._query_data)
+            return next(self._query_data)
         except StopIteration:
             return None
 
@@ -353,6 +417,10 @@ class Cursor(object):
     def setoutputsize(self, size, column=None):
         """No-op, but for consistency raise an error if cursor is closed."""
 
+    def __iter__(self):
+        self._try_fetch()
+        return iter(self._query_data)
+
 
 def _format_operation_list(operation, parameters):
     """Formats parameters in operation in the way BigQuery expects.
@@ -377,7 +445,7 @@ def _format_operation_list(operation, parameters):
 
     try:
         return operation % tuple(formatted_params)
-    except TypeError as exc:
+    except (TypeError, ValueError) as exc:
         raise exceptions.ProgrammingError(exc)
 
 
@@ -407,11 +475,11 @@ def _format_operation_dict(operation, parameters):
 
     try:
         return operation % formatted_params
-    except KeyError as exc:
+    except (KeyError, ValueError, TypeError) as exc:
         raise exceptions.ProgrammingError(exc)
 
 
-def _format_operation(operation, parameters=None):
+def _format_operation(operation, parameters):
     """Formats parameters in operation in way BigQuery expects.
 
     Args:
@@ -429,9 +497,93 @@ def _format_operation(operation, parameters=None):
             ``parameters`` argument.
     """
     if parameters is None or len(parameters) == 0:
-        return operation
+        return operation.replace("%%", "%"), None  # Still do percent de-escaping.
+
+    operation, parameter_types = _extract_types(operation)
+    if parameter_types is None:
+        raise exceptions.ProgrammingError(
+            f"Parameters were provided, but {repr(operation)} has no placeholders."
+        )
 
     if isinstance(parameters, collections_abc.Mapping):
-        return _format_operation_dict(operation, parameters)
+        return _format_operation_dict(operation, parameters), parameter_types
 
-    return _format_operation_list(operation, parameters)
+    return _format_operation_list(operation, parameters), parameter_types
+
+
+def _extract_types(
+    operation,
+    extra_type_sub=re.compile(
+        r"""
+        (%*)          # Extra %s.  We'll deal with these in the replacement code
+
+        %             # Beginning of replacement, %s, %(...)s
+
+        (?:\(         # Begin of optional name and/or type
+        ([^:)]*)      # name
+        (?::          # ':' introduces type
+          (             # start of type group
+            [a-zA-Z0-9_<>, ]+ # First part, no parens
+
+            (?:               # start sets of parens + non-paren text
+              \([0-9 ,]+\)      # comma-separated groups of digits in parens
+                                # (e.g. string(10))
+              (?=[, >)])        # Must be followed by ,>) or space
+              [a-zA-Z0-9<>, ]*  # Optional non-paren chars
+            )*                # Can be zero or more of parens and following text
+          )             # end of type group
+        )?            # close type clause ":type"
+        \))?          # End of optional name and/or type
+
+        s             # End of replacement
+        """,
+        re.VERBOSE,
+    ).sub,
+):
+    """Remove type information from parameter placeholders.
+
+    For every parameter of the form %(name:type)s, replace with %(name)s and add the
+    item name->type to dict that's returned.
+
+    Returns operation without type information and a dictionary of names and types.
+    """
+    parameter_types = None
+
+    def repl(m):
+        nonlocal parameter_types
+        prefix, name, type_ = m.groups()
+        if len(prefix) % 2:
+            # The prefix has an odd number of %s, the last of which
+            # escapes the % we're looking for, so we don't want to
+            # change anything.
+            return m.group(0)
+
+        try:
+            if name:
+                if not parameter_types:
+                    parameter_types = {}
+                if type_:
+                    if name in parameter_types:
+                        if type_ != parameter_types[name]:
+                            raise exceptions.ProgrammingError(
+                                f"Conflicting types for {name}: "
+                                f"{parameter_types[name]} and {type_}."
+                            )
+                    else:
+                        parameter_types[name] = type_
+                else:
+                    if not isinstance(parameter_types, dict):
+                        raise TypeError()
+
+                return f"{prefix}%({name})s"
+            else:
+                if parameter_types is None:
+                    parameter_types = []
+                parameter_types.append(type_)
+                return f"{prefix}%s"
+        except (AttributeError, TypeError):
+            raise exceptions.ProgrammingError(
+                f"{repr(operation)} mixes named and unamed parameters."
+            )
+
+    return extra_type_sub(repl, operation), parameter_types

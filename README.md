@@ -77,7 +77,9 @@ index="_internal" bigquery source="*/splunkd.log"
 
 ## Binary File Declaration
 
-* `lib/google/protobuf/internal/_api_implementation.cpython-37m-x86_64-linux-gnu.so`
-* `lib/google/protobuf/pyext/_message.cpython-37m-x86_64-linux-gnu.so`
-* `lib/google_crc32c/_crc32c.cpython-37m-x86_64-linux-gnu.so`
-* `lib/grpc/_cython/cygrpc.cpython-37m-x86_64-linux-gnu.so`
+None. `lib/` is pure Python - `google-auth` is capped below the version where
+`cryptography` became a hard dependency (see `lib/requirements.txt`), so service-account
+JWT signing uses google-auth's pure-Python `rsa`/`pyasn1` signer instead, and `.build.sh`
+deletes every other native speedup in the vendored stack (charset-normalizer, protobuf's
+upb, google-crc32c) since each has a pure-Python fallback. This keeps the add-on
+architecture-agnostic (x86_64, AArch64, etc.) with a single vendored `lib/`.

@@ -18,7 +18,6 @@ Also supported here are simple (media) uploads and multipart
 uploads that contain both metadata and a small file as payload.
 """
 
-
 from google._async_resumable_media import _upload
 from google._async_resumable_media.requests import _request_helpers
 
@@ -154,15 +153,15 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
 
     .. testsetup:: resumable-constructor
 
-       bucket = u'bucket-foo'
+       bucket = 'bucket-foo'
 
     .. doctest:: resumable-constructor
 
        >>> from google.resumable_media.requests import ResumableUpload
        >>>
        >>> url_template = (
-       ...     u'https://www.googleapis.com/upload/storage/v1/b/{bucket}/o?'
-       ...     u'uploadType=resumable')
+       ...     'https://www.googleapis.com/upload/storage/v1/b/{bucket}/o?'
+       ...     'uploadType=resumable')
        >>> upload_url = url_template.format(bucket=bucket)
        >>>
        >>> chunk_size = 3 * 1024 * 1024  # 3MB
@@ -179,11 +178,11 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
 
        import mock
        import requests
-       from six.moves import http_client
+       import http.client
 
        from google.resumable_media.requests import ResumableUpload
 
-       upload_url = u'http://test.invalid'
+       upload_url = 'http://test.invalid'
        chunk_size = 3 * 1024 * 1024  # 3MB
        upload = ResumableUpload(upload_url, chunk_size)
 
@@ -191,14 +190,14 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
        os.close(file_desc)
 
        data = b'some bytes!'
-       with open(filename, u'wb') as file_obj:
+       with open(filename, 'wb') as file_obj:
            file_obj.write(data)
 
        fake_response = requests.Response()
-       fake_response.status_code = int(http_client.OK)
+       fake_response.status_code = int(http.client.OK)
        fake_response._content = b''
-       resumable_url = u'http://test.invalid?upload_id=7up'
-       fake_response.headers[u'location'] = resumable_url
+       resumable_url = 'http://test.invalid?upload_id=7up'
+       fake_response.headers['location'] = resumable_url
 
        post_method = mock.Mock(return_value=fake_response, spec=[])
        transport = mock.Mock(request=post_method, spec=['request'])
@@ -210,11 +209,11 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
        >>> upload.total_bytes is None
        True
        >>>
-       >>> stream = open(filename, u'rb')
+       >>> stream = open(filename, 'rb')
        >>> total_bytes = os.path.getsize(filename)
-       >>> metadata = {u'name': filename}
+       >>> metadata = {'name': filename}
        >>> response = upload.initiate(
-       ...     transport, stream, metadata, u'text/plain',
+       ...     transport, stream, metadata, 'text/plain',
        ...     total_bytes=total_bytes)
        >>> response
        <Response [200]>
@@ -236,26 +235,26 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
 
        import mock
        import requests
-       from six.moves import http_client
+       import http.client
 
        from google.resumable_media.requests import ResumableUpload
 
-       upload_url = u'http://test.invalid'
+       upload_url = 'http://test.invalid'
        chunk_size = 3 * 1024 * 1024  # 3MB
        upload = ResumableUpload(upload_url, chunk_size)
 
        fake_response = requests.Response()
-       fake_response.status_code = int(http_client.OK)
+       fake_response.status_code = int(http.client.OK)
        fake_response._content = b''
-       resumable_url = u'http://test.invalid?upload_id=7up'
-       fake_response.headers[u'location'] = resumable_url
+       resumable_url = 'http://test.invalid?upload_id=7up'
+       fake_response.headers['location'] = resumable_url
 
        post_method = mock.Mock(return_value=fake_response, spec=[])
        transport = mock.Mock(request=post_method, spec=['request'])
 
        data = b'some MOAR bytes!'
-       metadata = {u'name': u'some-file.jpg'}
-       content_type = u'image/jpeg'
+       metadata = {'name': 'some-file.jpg'}
+       content_type = 'image/jpeg'
 
     .. doctest:: resumable-implicit-size
 
@@ -277,25 +276,25 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
 
        import mock
        import requests
-       from six.moves import http_client
+       import http.client
 
        from google.resumable_media.requests import ResumableUpload
 
-       upload_url = u'http://test.invalid'
+       upload_url = 'http://test.invalid'
        chunk_size = 3 * 1024 * 1024  # 3MB
        upload = ResumableUpload(upload_url, chunk_size)
 
        fake_response = requests.Response()
-       fake_response.status_code = int(http_client.OK)
+       fake_response.status_code = int(http.client.OK)
        fake_response._content = b''
-       resumable_url = u'http://test.invalid?upload_id=7up'
-       fake_response.headers[u'location'] = resumable_url
+       resumable_url = 'http://test.invalid?upload_id=7up'
+       fake_response.headers['location'] = resumable_url
 
        post_method = mock.Mock(return_value=fake_response, spec=[])
        transport = mock.Mock(request=post_method, spec=['request'])
 
-       metadata = {u'name': u'some-file.jpg'}
-       content_type = u'application/octet-stream'
+       metadata = {'name': 'some-file.jpg'}
+       content_type = 'application/octet-stream'
 
        stream = io.BytesIO(b'data')
 
@@ -418,24 +417,24 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
 
            import mock
            import requests
-           from six.moves import http_client
+           import http.client
 
            from google import resumable_media
            import google.resumable_media.requests.upload as upload_mod
 
            transport = mock.Mock(spec=['request'])
            fake_response = requests.Response()
-           fake_response.status_code = int(http_client.BAD_REQUEST)
+           fake_response.status_code = int(http.client.BAD_REQUEST)
            transport.request.return_value = fake_response
 
-           upload_url = u'http://test.invalid'
+           upload_url = 'http://test.invalid'
            upload = upload_mod.ResumableUpload(
                upload_url, resumable_media.UPLOAD_CHUNK_SIZE)
            # Fake that the upload has been initiate()-d
            data = b'data is here'
            upload._stream = io.BytesIO(data)
            upload._total_bytes = len(data)
-           upload._resumable_url = u'http://test.invalid?upload_id=nope'
+           upload._resumable_url = 'http://test.invalid?upload_id=nope'
 
         .. doctest:: bad-response
            :options: +NORMALIZE_WHITESPACE
@@ -481,7 +480,7 @@ class ResumableUpload(_request_helpers.RequestsMixin, _upload.ResumableUpload):
             retry_strategy=self._retry_strategy,
             timeout=timeout,
         )
-        await self._process_response(response, len(payload))
+        await self._process_resumable_response(response, len(payload))
         return response
 
     async def recover(self, transport):

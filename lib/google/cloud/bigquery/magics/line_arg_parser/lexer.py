@@ -49,127 +49,59 @@ StateTransition = namedtuple("StateTransition", ("new_state", "total_offset"))
 # the value of an option other than "--params", we do not really care about its
 # structure, and thus do not want to use any of the "Python tokens" for pattern matching.
 #
-# Since token definition order is important, an OrderedDict is needed with tightly
-# controlled member definitions (i.e. passed as a sequence, and *not* via kwargs).
+# Token definition order is important, thus an OrderedDict is used. In addition, PEP 468
+# guarantees us that the order of kwargs is preserved in Python 3.6+.
 token_types = OrderedDict(
-    [
-        (
-            "state_parse_pos_args",
-            OrderedDict(
-                [
-                    (
-                        "GOTO_PARSE_NON_PARAMS_OPTIONS",
-                        r"(?P<GOTO_PARSE_NON_PARAMS_OPTIONS>(?=--))",  # double dash - starting the options list
-                    ),
-                    (
-                        "DEST_VAR",
-                        r"(?P<DEST_VAR>[^\d\W]\w*)",  # essentially a Python ID
-                    ),
-                ]
-            ),
+    state_parse_pos_args=OrderedDict(
+        GOTO_PARSE_NON_PARAMS_OPTIONS=r"(?P<GOTO_PARSE_NON_PARAMS_OPTIONS>(?=--))",  # double dash - starting the options list
+        DEST_VAR=r"(?P<DEST_VAR>[^\d\W]\w*)",  # essentially a Python ID
+    ),
+    state_parse_non_params_options=OrderedDict(
+        GOTO_PARSE_PARAMS_OPTION=r"(?P<GOTO_PARSE_PARAMS_OPTION>(?=--params(?:\s|=|--|$)))",  # the --params option
+        OPTION_SPEC=r"(?P<OPTION_SPEC>--\w+)",
+        OPTION_EQ=r"(?P<OPTION_EQ>=)",
+        OPT_VAL=r"(?P<OPT_VAL>\S+?(?=\s|--|$))",
+    ),
+    state_parse_params_option=OrderedDict(
+        PY_STRING=r"(?P<PY_STRING>(?:{})|(?:{}))".format(  # single and double quoted strings
+            r"'(?:[^'\\]|\.)*'", r'"(?:[^"\\]|\.)*"'
         ),
-        (
-            "state_parse_non_params_options",
-            OrderedDict(
-                [
-                    (
-                        "GOTO_PARSE_PARAMS_OPTION",
-                        r"(?P<GOTO_PARSE_PARAMS_OPTION>(?=--params(?:\s|=|--|$)))",  # the --params option
-                    ),
-                    ("OPTION_SPEC", r"(?P<OPTION_SPEC>--\w+)"),
-                    ("OPTION_EQ", r"(?P<OPTION_EQ>=)"),
-                    ("OPT_VAL", r"(?P<OPT_VAL>\S+?(?=\s|--|$))"),
-                ]
-            ),
-        ),
-        (
-            "state_parse_params_option",
-            OrderedDict(
-                [
-                    (
-                        "PY_STRING",
-                        r"(?P<PY_STRING>(?:{})|(?:{}))".format(
-                            r"'(?:[^'\\]|\.)*'",
-                            r'"(?:[^"\\]|\.)*"',  # single and double quoted strings
-                        ),
-                    ),
-                    ("PARAMS_OPT_SPEC", r"(?P<PARAMS_OPT_SPEC>--params(?=\s|=|--|$))"),
-                    ("PARAMS_OPT_EQ", r"(?P<PARAMS_OPT_EQ>=)"),
-                    (
-                        "GOTO_PARSE_NON_PARAMS_OPTIONS",
-                        r"(?P<GOTO_PARSE_NON_PARAMS_OPTIONS>(?=--\w+))",  # found another option spec
-                    ),
-                    ("PY_BOOL", r"(?P<PY_BOOL>True|False)"),
-                    ("DOLLAR_PY_ID", r"(?P<DOLLAR_PY_ID>\$[^\d\W]\w*)"),
-                    (
-                        "PY_NUMBER",
-                        r"(?P<PY_NUMBER>-?[1-9]\d*(?:\.\d+)?(:?[e|E][+-]?\d+)?)",
-                    ),
-                    ("SQUOTE", r"(?P<SQUOTE>')"),
-                    ("DQUOTE", r'(?P<DQUOTE>")'),
-                    ("COLON", r"(?P<COLON>:)"),
-                    ("COMMA", r"(?P<COMMA>,)"),
-                    ("LCURL", r"(?P<LCURL>\{)"),
-                    ("RCURL", r"(?P<RCURL>})"),
-                    ("LSQUARE", r"(?P<LSQUARE>\[)"),
-                    ("RSQUARE", r"(?P<RSQUARE>])"),
-                    ("LPAREN", r"(?P<LPAREN>\()"),
-                    ("RPAREN", r"(?P<RPAREN>\))"),
-                ]
-            ),
-        ),
-        (
-            "common",
-            OrderedDict(
-                [
-                    ("WS", r"(?P<WS>\s+)"),
-                    ("EOL", r"(?P<EOL>$)"),
-                    (
-                        # anything not a whitespace or matched by something else
-                        "UNKNOWN",
-                        r"(?P<UNKNOWN>\S+)",
-                    ),
-                ]
-            ),
-        ),
-    ]
+        PARAMS_OPT_SPEC=r"(?P<PARAMS_OPT_SPEC>--params(?=\s|=|--|$))",
+        PARAMS_OPT_EQ=r"(?P<PARAMS_OPT_EQ>=)",
+        GOTO_PARSE_NON_PARAMS_OPTIONS=r"(?P<GOTO_PARSE_NON_PARAMS_OPTIONS>(?=--\w+))",  # found another option spec
+        PY_BOOL=r"(?P<PY_BOOL>True|False)",
+        DOLLAR_PY_ID=r"(?P<DOLLAR_PY_ID>\$[^\d\W]\w*)",
+        PY_NUMBER=r"(?P<PY_NUMBER>-?[1-9]\d*(?:\.\d+)?(:?[e|E][+-]?\d+)?)",
+        SQUOTE=r"(?P<SQUOTE>')",
+        DQUOTE=r'(?P<DQUOTE>")',
+        COLON=r"(?P<COLON>:)",
+        COMMA=r"(?P<COMMA>,)",
+        LCURL=r"(?P<LCURL>\{)",
+        RCURL=r"(?P<RCURL>})",
+        LSQUARE=r"(?P<LSQUARE>\[)",
+        RSQUARE=r"(?P<RSQUARE>])",
+        LPAREN=r"(?P<LPAREN>\()",
+        RPAREN=r"(?P<RPAREN>\))",
+    ),
+    common=OrderedDict(
+        WS=r"(?P<WS>\s+)",
+        EOL=r"(?P<EOL>$)",
+        UNKNOWN=r"(?P<UNKNOWN>\S+)",  # anything not a whitespace or matched by something else
+    ),
 )
 
 
-# The _generate_next_value_() enum hook is only available in Python 3.6+, thus we
-# need to do some acrobatics to implement an "auto str enum" base class. Implementation
-# based on the recipe provided by the very author of the Enum library:
-# https://stackoverflow.com/a/32313954/5040035
-class StrEnumMeta(enum.EnumMeta):
-    @classmethod
-    def __prepare__(metacls, name, bases, **kwargs):
-        # Having deterministic enum members definition order is nice.
-        return OrderedDict()
+class AutoStrEnum(str, enum.Enum):
+    """Base enum class for for name=value str enums."""
 
-    def __new__(metacls, name, bases, oldclassdict):
-        # Scan through the declared enum members and convert any value that is a plain
-        # empty tuple into a `str` of the name instead.
-        newclassdict = enum._EnumDict()
-        for key, val in oldclassdict.items():
-            if val == ():
-                val = key
-            newclassdict[key] = val
-        return super(StrEnumMeta, metacls).__new__(metacls, name, bases, newclassdict)
+    def _generate_next_value_(name, start, count, last_values):
+        return name
 
 
-# The @six.add_metaclass decorator does not work, Enum complains about _sunder_ names,
-# and we cannot use class syntax directly, because the Python 3 version would cause
-# a syntax error under Python 2.
-AutoStrEnum = StrEnumMeta(
-    "AutoStrEnum",
-    (str, enum.Enum),
-    {"__doc__": "Base enum class for for name=value str enums."},
-)
-
-TokenType = AutoStrEnum(
+TokenType = AutoStrEnum(  # type: ignore  # pytype: disable=wrong-arg-types
     "TokenType",
     [
-        (name, name)
+        (name, enum.auto())
         for name in itertools.chain.from_iterable(token_types.values())
         if not name.startswith("GOTO_")
     ],
@@ -177,10 +109,10 @@ TokenType = AutoStrEnum(
 
 
 class LexerState(AutoStrEnum):
-    PARSE_POS_ARGS = ()  # parsing positional arguments
-    PARSE_NON_PARAMS_OPTIONS = ()  # parsing options other than "--params"
-    PARSE_PARAMS_OPTION = ()  # parsing the "--params" option
-    STATE_END = ()
+    PARSE_POS_ARGS = enum.auto()  # parsing positional arguments
+    PARSE_NON_PARAMS_OPTIONS = enum.auto()  # parsing options other than "--params"
+    PARSE_PARAMS_OPTION = enum.auto()  # parsing the "--params" option
+    STATE_END = enum.auto()
 
 
 class Lexer(object):

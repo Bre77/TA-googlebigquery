@@ -30,16 +30,28 @@ DateFromTicks = datetime.date.fromtimestamp
 TimestampFromTicks = datetime.datetime.fromtimestamp
 
 
-def Binary(string):
+def Binary(data):
     """Contruct a DB-API binary value.
 
     Args:
-        string (str): A string to encode as a binary value.
+        data (bytes-like): An object containing binary data and that
+                           can be converted to bytes with the `bytes` builtin.
 
     Returns:
-        bytes: The UTF-8 encoded bytes representing the string.
+        bytes: The binary data as a bytes object.
     """
-    return string.encode("utf-8")
+    if isinstance(data, int):
+        # This is not the conversion we're looking for, because it
+        # will simply create a bytes object of the given size.
+        raise TypeError("cannot convert `int` object to binary")
+
+    try:
+        return bytes(data)
+    except TypeError:
+        if isinstance(data, str):
+            return data.encode("utf-8")
+        else:
+            raise
 
 
 def TimeFromTicks(ticks, tz=None):
@@ -78,7 +90,7 @@ class _DBAPITypeObject(object):
 STRING = "STRING"
 BINARY = _DBAPITypeObject("BYTES", "RECORD", "STRUCT")
 NUMBER = _DBAPITypeObject(
-    "INTEGER", "INT64", "FLOAT", "FLOAT64", "NUMERIC", "BOOLEAN", "BOOL"
+    "INTEGER", "INT64", "FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC", "BOOLEAN", "BOOL"
 )
 DATETIME = _DBAPITypeObject("TIMESTAMP", "DATE", "TIME", "DATETIME")
 ROWID = "ROWID"

@@ -14,125 +14,11 @@
 
 """IPython Magics
 
-.. function:: %%bigquery
+Install ``bigquery-magics`` and call ``%load_ext bigquery_magics`` to use the
+``%%bigquery`` cell magic.
 
-    IPython cell magic to run a query and display the result as a DataFrame
-
-    .. code-block:: python
-
-        %%bigquery [<destination_var>] [--project <project>] [--use_legacy_sql]
-                   [--verbose] [--params <params>]
-        <query>
-
-    Parameters:
-
-    * ``<destination_var>`` (Optional[line argument]):
-        variable to store the query results. The results are not displayed if
-        this parameter is used. If an error occurs during the query execution,
-        the corresponding ``QueryJob`` instance (if available) is stored in
-        the variable instead.
-    * ``--destination_table`` (Optional[line argument]):
-        A dataset and table to store the query results. If table does not exists,
-        it will be created. If table already exists, its data will be overwritten.
-        Variable should be in a format <dataset_id>.<table_id>.
-    * ``--project <project>`` (Optional[line argument]):
-        Project to use for running the query. Defaults to the context
-        :attr:`~google.cloud.bigquery.magics.Context.project`.
-    * ``--use_bqstorage_api`` (Optional[line argument]):
-        [Deprecated] Not used anymore, as BigQuery Storage API is used by default.
-    * ``--use_rest_api`` (Optional[line argument]):
-        Use the BigQuery REST API instead of the Storage API.
-    * ``--use_legacy_sql`` (Optional[line argument]):
-        Runs the query using Legacy SQL syntax. Defaults to Standard SQL if
-        this argument not used.
-    * ``--verbose`` (Optional[line argument]):
-        If this flag is used, information including the query job ID and the
-        amount of time for the query to complete will not be cleared after the
-        query is finished. By default, this information will be displayed but
-        will be cleared after the query is finished.
-    * ``--params <params>`` (Optional[line argument]):
-        If present, the argument following the ``--params`` flag must be
-        either:
-
-        * :class:`str` - A JSON string representation of a dictionary in the
-          format ``{"param_name": "param_value"}`` (ex. ``{"num": 17}``). Use
-          of the parameter in the query should be indicated with
-          ``@param_name``. See ``In[5]`` in the Examples section below.
-
-        * :class:`dict` reference - A reference to a ``dict`` in the format
-          ``{"param_name": "param_value"}``, where the value types must be JSON
-          serializable. The variable reference is indicated by a ``$`` before
-          the variable name (ex. ``$my_dict_var``). See ``In[6]`` and ``In[7]``
-          in the Examples section below.
-
-    * ``<query>`` (required, cell argument):
-        SQL query to run. If the query does not contain any whitespace (aside
-        from leading and trailing whitespace), it is assumed to represent a
-        fully-qualified table ID, and the latter's data will be fetched.
-
-    Returns:
-        A :class:`pandas.DataFrame` with the query results.
-
-    .. note::
-        All queries run using this magic will run using the context
-        :attr:`~google.cloud.bigquery.magics.Context.credentials`.
-
-    Examples:
-        The following examples can be run in an IPython notebook after loading
-        the bigquery IPython extension (see ``In[1]``) and setting up
-        Application Default Credentials.
-
-    .. code-block:: none
-
-        In [1]: %load_ext google.cloud.bigquery
-
-        In [2]: %%bigquery
-           ...: SELECT name, SUM(number) as count
-           ...: FROM `bigquery-public-data.usa_names.usa_1910_current`
-           ...: GROUP BY name
-           ...: ORDER BY count DESC
-           ...: LIMIT 3
-
-        Out[2]:       name    count
-           ...: -------------------
-           ...: 0    James  4987296
-           ...: 1     John  4866302
-           ...: 2   Robert  4738204
-
-        In [3]: %%bigquery df --project my-alternate-project --verbose
-           ...: SELECT name, SUM(number) as count
-           ...: FROM `bigquery-public-data.usa_names.usa_1910_current`
-           ...: WHERE gender = 'F'
-           ...: GROUP BY name
-           ...: ORDER BY count DESC
-           ...: LIMIT 3
-        Executing query with job ID: bf633912-af2c-4780-b568-5d868058632b
-        Query executing: 2.61s
-        Query complete after 2.92s
-
-        In [4]: df
-
-        Out[4]:          name    count
-           ...: ----------------------
-           ...: 0        Mary  3736239
-           ...: 1    Patricia  1568495
-           ...: 2   Elizabeth  1519946
-
-        In [5]: %%bigquery --params {"num": 17}
-           ...: SELECT @num AS num
-
-        Out[5]:     num
-           ...: -------
-           ...: 0    17
-
-        In [6]: params = {"num": 17}
-
-        In [7]: %%bigquery --params $params
-           ...: SELECT @num AS num
-
-        Out[7]:     num
-           ...: -------
-           ...: 0    17
+See the `BigQuery Magics reference documentation
+<https://googleapis.dev/python/bigquery-magics/latest/>`_.
 """
 
 from __future__ import print_function
@@ -147,25 +33,29 @@ import warnings
 from concurrent import futures
 
 try:
-    import IPython
-    from IPython import display
-    from IPython.core import magic_arguments
-except ImportError:  # pragma: NO COVER
+    import IPython  # type: ignore
+    from IPython import display  # type: ignore
+    from IPython.core import magic_arguments  # type: ignore
+except ImportError:
     raise ImportError("This module can only be loaded in IPython.")
-
-import six
 
 from google.api_core import client_info
 from google.api_core import client_options
 from google.api_core.exceptions import NotFound
-import google.auth
+import google.auth  # type: ignore
 from google.cloud import bigquery
 import google.cloud.bigquery.dataset
+from google.cloud.bigquery import _versions_helpers
+from google.cloud.bigquery import exceptions
 from google.cloud.bigquery.dbapi import _helpers
 from google.cloud.bigquery.magics import line_arg_parser as lap
 
+try:
+    import bigquery_magics  # type: ignore
+except ImportError:
+    bigquery_magics = None
 
-IPYTHON_USER_AGENT = "ipython-{}".format(IPython.__version__)
+IPYTHON_USER_AGENT = "ipython-{}".format(IPython.__version__)  # type: ignore
 
 
 class Context(object):
@@ -182,7 +72,7 @@ class Context(object):
         self._default_query_job_config = bigquery.QueryJobConfig()
         self._bigquery_client_options = client_options.ClientOptions()
         self._bqstorage_client_options = client_options.ClientOptions()
-        self._progress_bar_type = "tqdm"
+        self._progress_bar_type = "tqdm_notebook"
 
     @property
     def credentials(self):
@@ -326,7 +216,7 @@ class Context(object):
             Manually setting the progress_bar_type:
 
             >>> from google.cloud.bigquery import magics
-            >>> magics.context.progress_bar_type = "tqdm"
+            >>> magics.context.progress_bar_type = "tqdm_notebook"
         """
         return self._progress_bar_type
 
@@ -335,7 +225,14 @@ class Context(object):
         self._progress_bar_type = value
 
 
-context = Context()
+# If bigquery_magics is available, we load that extension rather than this one.
+# Ensure google.cloud.bigquery.magics.context setters are on the correct magics
+# implementation in case the user has installed the package but hasn't updated
+# their code.
+if bigquery_magics is not None:
+    context = bigquery_magics.context
+else:
+    context = Context()
 
 
 def _handle_error(error, destination_var=None):
@@ -343,7 +240,7 @@ def _handle_error(error, destination_var=None):
 
     Args:
         error (Exception):
-            An exception that ocurred during the query exectution.
+            An exception that occurred during the query execution.
         destination_var (Optional[str]):
             The name of the IPython session variable to store the query job.
     """
@@ -386,22 +283,25 @@ def _run_query(client, query, job_config=None):
         Query complete after 2.07s
         'bf633912-af2c-4780-b568-5d868058632b'
     """
-    start_time = time.time()
+    start_time = time.perf_counter()
     query_job = client.query(query, job_config=job_config)
 
     if job_config and job_config.dry_run:
         return query_job
 
-    print("Executing query with job ID: {}".format(query_job.job_id))
+    print(f"Executing query with job ID: {query_job.job_id}")
 
     while True:
-        print("\rQuery executing: {:0.2f}s".format(time.time() - start_time), end="")
+        print(
+            f"\rQuery executing: {time.perf_counter() - start_time:.2f}s".format(),
+            end="",
+        )
         try:
             query_job.result(timeout=0.5)
             break
         except futures.TimeoutError:
             continue
-    print("\nQuery complete after {:0.2f}s".format(time.time() - start_time))
+    print(f"\nJob ID {query_job.job_id} successfully executed")
     return query_job
 
 
@@ -422,7 +322,7 @@ def _create_dataset_if_necessary(client, dataset_id):
         pass
     dataset = bigquery.Dataset(dataset_reference)
     dataset.location = client.location
-    print("Creating dataset: {}".format(dataset_id))
+    print(f"Creating dataset: {dataset_id}")
     dataset = client.create_dataset(dataset)
 
 
@@ -502,6 +402,12 @@ def _create_dataset_if_necessary(client, dataset_id):
     ),
 )
 @magic_arguments.argument(
+    "--no_query_cache",
+    action="store_true",
+    default=False,
+    help=("Do not use cached query results."),
+)
+@magic_arguments.argument(
     "--use_bqstorage_api",
     action="store_true",
     default=None,
@@ -551,7 +457,16 @@ def _create_dataset_if_necessary(client, dataset_id):
     default=None,
     help=(
         "Sets progress bar type to display a progress bar while executing the query."
-        "Defaults to use tqdm. Install the ``tqdm`` package to use this feature."
+        "Defaults to use tqdm_notebook. Install the ``tqdm`` package to use this feature."
+    ),
+)
+@magic_arguments.argument(
+    "--location",
+    type=str,
+    default=None,
+    help=(
+        "Set the location to execute query."
+        "Defaults to location set in query setting in console."
     ),
 )
 def _cell_magic(line, query):
@@ -577,16 +492,16 @@ def _cell_magic(line, query):
             "--params is not a correctly formatted JSON string or a JSON "
             "serializable dictionary"
         )
-        six.raise_from(rebranded_error, exc)
+        raise rebranded_error from exc
     except lap.exceptions.DuplicateQueryParamsError as exc:
         rebranded_error = ValueError("Duplicate --params option.")
-        six.raise_from(rebranded_error, exc)
+        raise rebranded_error from exc
     except lap.exceptions.ParseError as exc:
         rebranded_error = ValueError(
             "Unrecognized input, are option values correct? "
             "Error details: {}".format(exc.args[0])
         )
-        six.raise_from(rebranded_error, exc)
+        raise rebranded_error from exc
 
     args = magic_arguments.parse_argstring(_cell_magic, rest_of_args)
 
@@ -597,6 +512,7 @@ def _cell_magic(line, query):
             category=DeprecationWarning,
         )
     use_bqstorage_api = not args.use_rest_api
+    location = args.location
 
     params = []
     if params_option_value:
@@ -608,7 +524,7 @@ def _cell_magic(line, query):
             )
             raise NameError(msg)
 
-        params = _helpers.to_query_parameters(ast.literal_eval(params_option_value))
+        params = _helpers.to_query_parameters(ast.literal_eval(params_option_value), {})
 
     project = args.project or context.project
 
@@ -625,6 +541,7 @@ def _cell_magic(line, query):
         default_query_job_config=context.default_query_job_config,
         client_info=client_info.ClientInfo(user_agent=IPYTHON_USER_AGENT),
         client_options=bigquery_client_options,
+        location=location,
     )
     if context._connection:
         client._connection = context._connection
@@ -637,7 +554,9 @@ def _cell_magic(line, query):
             bqstorage_client_options.api_endpoint = args.bqstorage_api_endpoint
 
     bqstorage_client = _make_bqstorage_client(
-        use_bqstorage_api, context.credentials, bqstorage_client_options,
+        client,
+        use_bqstorage_api,
+        bqstorage_client_options,
     )
 
     close_transports = functools.partial(_close_transports, client, bqstorage_client)
@@ -655,6 +574,29 @@ def _cell_magic(line, query):
             _handle_error(error, args.destination_var)
             return
 
+        # Check if query is given as a reference to a variable.
+        if query.startswith("$"):
+            query_var_name = query[1:]
+
+            if not query_var_name:
+                missing_msg = 'Missing query variable name, empty "$" is not allowed.'
+                raise NameError(missing_msg)
+
+            if query_var_name.isidentifier():
+                ip = IPython.get_ipython()
+                query = ip.user_ns.get(query_var_name, ip)  # ip serves as a sentinel
+
+                if query is ip:
+                    raise NameError(
+                        f"Unknown query, variable {query_var_name} does not exist."
+                    )
+                else:
+                    if not isinstance(query, (str, bytes)):
+                        raise TypeError(
+                            f"Query variable {query_var_name} must be a string "
+                            "or a bytes-like value."
+                        )
+
         # Any query that does not contain whitespace (aside from leading and trailing whitespace)
         # is assumed to be a table id
         if not re.search(r"\s", query):
@@ -664,7 +606,10 @@ def _cell_magic(line, query):
                 _handle_error(ex, args.destination_var)
                 return
 
-            result = rows.to_dataframe(bqstorage_client=bqstorage_client)
+            result = rows.to_dataframe(
+                bqstorage_client=bqstorage_client,
+                create_bqstorage_client=False,
+            )
             if args.destination_var:
                 IPython.get_ipython().push({args.destination_var: result})
                 return
@@ -675,6 +620,10 @@ def _cell_magic(line, query):
         job_config.query_parameters = params
         job_config.use_legacy_sql = args.use_legacy_sql
         job_config.dry_run = args.dry_run
+
+        # Don't override context job config unless --no_query_cache is explicitly set.
+        if args.no_query_cache:
+            job_config.use_query_cache = False
 
         if args.destination_table:
             split = args.destination_table.split(".")
@@ -721,11 +670,15 @@ def _cell_magic(line, query):
 
         if max_results:
             result = query_job.result(max_results=max_results).to_dataframe(
-                bqstorage_client=bqstorage_client, progress_bar_type=progress_bar
+                bqstorage_client=None,
+                create_bqstorage_client=False,
+                progress_bar_type=progress_bar,
             )
         else:
             result = query_job.to_dataframe(
-                bqstorage_client=bqstorage_client, progress_bar_type=progress_bar
+                bqstorage_client=bqstorage_client,
+                create_bqstorage_client=False,
+                progress_bar_type=progress_bar,
             )
 
         if args.destination_var:
@@ -755,20 +708,41 @@ def _split_args_line(line):
     return params_option_value, rest_of_args
 
 
-def _make_bqstorage_client(use_bqstorage_api, credentials, client_options):
+def _make_bqstorage_client(client, use_bqstorage_api, client_options):
+    """Creates a BigQuery Storage client.
+
+    Args:
+        client (:class:`~google.cloud.bigquery.client.Client`): BigQuery client.
+        use_bqstorage_api (bool): whether BigQuery Storage API is used or not.
+        client_options (:class:`google.api_core.client_options.ClientOptions`):
+            Custom options used with a new BigQuery Storage client instance
+            if one is created.
+
+    Raises:
+        ImportError: if google-cloud-bigquery-storage is not installed, or
+            grpcio package is not installed.
+
+
+    Returns:
+        None: if ``use_bqstorage_api == False``, or google-cloud-bigquery-storage
+            is outdated.
+        BigQuery Storage Client:
+    """
     if not use_bqstorage_api:
         return None
 
     try:
-        from google.cloud import bigquery_storage
-    except ImportError as err:
+        _versions_helpers.BQ_STORAGE_VERSIONS.try_import(raise_if_error=True)
+    except exceptions.BigQueryStorageNotFoundError as err:
         customized_error = ImportError(
             "The default BigQuery Storage API client cannot be used, install "
             "the missing google-cloud-bigquery-storage and pyarrow packages "
             "to use it. Alternatively, use the classic REST API by specifying "
             "the --use_rest_api magic option."
         )
-        six.raise_from(customized_error, err)
+        raise customized_error from err
+    except exceptions.LegacyBigQueryStorageError:
+        pass
 
     try:
         from google.api_core.gapic_v1 import client_info as gapic_client_info
@@ -776,12 +750,11 @@ def _make_bqstorage_client(use_bqstorage_api, credentials, client_options):
         customized_error = ImportError(
             "Install the grpcio package to use the BigQuery Storage API."
         )
-        six.raise_from(customized_error, err)
+        raise customized_error from err
 
-    return bigquery_storage.BigQueryReadClient(
-        credentials=credentials,
-        client_info=gapic_client_info.ClientInfo(user_agent=IPYTHON_USER_AGENT),
+    return client._ensure_bqstorage_client(
         client_options=client_options,
+        client_info=gapic_client_info.ClientInfo(user_agent=IPYTHON_USER_AGENT),
     )
 
 

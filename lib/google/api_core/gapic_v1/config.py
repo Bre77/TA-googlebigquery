@@ -21,7 +21,6 @@ method to tell the client library how to deal with retries and timeouts.
 import collections
 
 import grpc
-import six
 
 from google.api_core import exceptions
 from google.api_core import retry
@@ -33,6 +32,9 @@ _MILLIS_PER_SECOND = 1000.0
 
 def _exception_class_for_grpc_status_name(name):
     """Returns the Google API exception class for a gRPC error code name.
+
+    DEPRECATED: use ``exceptions.exception_class_for_grpc_status`` method
+    directly instead.
 
     Args:
         name (str): The name of the gRPC status code, for example,
@@ -47,6 +49,8 @@ def _exception_class_for_grpc_status_name(name):
 
 def _retry_from_retry_config(retry_params, retry_codes, retry_impl=retry.Retry):
     """Creates a Retry object given a gapic retry configuration.
+
+    DEPRECATED: instantiate retry and timeout classes directly instead.
 
     Args:
         retry_params (dict): The retry parameter values, for example::
@@ -82,6 +86,8 @@ def _retry_from_retry_config(retry_params, retry_codes, retry_impl=retry.Retry):
 def _timeout_from_retry_config(retry_params):
     """Creates a ExponentialTimeout object given a gapic retry configuration.
 
+    DEPRECATED: instantiate retry and timeout classes directly instead.
+
     Args:
         retry_params (dict): The retry parameter values, for example::
 
@@ -114,6 +120,8 @@ def parse_method_configs(interface_config, retry_impl=retry.Retry):
     """Creates default retry and timeout objects for each method in a gapic
     interface config.
 
+    DEPRECATED: instantiate retry and timeout classes directly instead.
+
     Args:
         interface_config (Mapping): The interface config section of the full
             gapic library config. For example, If the full configuration has
@@ -130,30 +138,28 @@ def parse_method_configs(interface_config, retry_impl=retry.Retry):
     # Grab all the retry codes
     retry_codes_map = {
         name: retry_codes
-        for name, retry_codes in six.iteritems(interface_config.get("retry_codes", {}))
+        for name, retry_codes in interface_config.get("retry_codes", {}).items()
     }
 
     # Grab all of the retry params
     retry_params_map = {
         name: retry_params
-        for name, retry_params in six.iteritems(
-            interface_config.get("retry_params", {})
-        )
+        for name, retry_params in interface_config.get("retry_params", {}).items()
     }
 
     # Iterate through all the API methods and create a flat MethodConfig
     # instance for each one.
     method_configs = {}
 
-    for method_name, method_params in six.iteritems(
-        interface_config.get("methods", {})
-    ):
+    for method_name, method_params in interface_config.get("methods", {}).items():
         retry_params_name = method_params.get("retry_params_name")
 
         if retry_params_name is not None:
             retry_params = retry_params_map[retry_params_name]
             retry_ = _retry_from_retry_config(
-                retry_params, retry_codes_map[method_params["retry_codes_name"]], retry_impl
+                retry_params,
+                retry_codes_map[method_params["retry_codes_name"]],
+                retry_impl,
             )
             timeout_ = _timeout_from_retry_config(retry_params)
 

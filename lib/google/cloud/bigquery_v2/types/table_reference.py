@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-
-# Copyright 2020 Google LLC
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
 import proto  # type: ignore
 
 
 __protobuf__ = proto.module(
-    package="google.cloud.bigquery.v2", manifest={"TableReference",},
+    package="google.cloud.bigquery.v2",
+    manifest={
+        "TableReference",
+    },
 )
 
 
@@ -39,13 +40,41 @@ class TableReference(proto.Message):
             maximum length is 1,024 characters. Certain operations allow
             suffixing of the table ID with a partition decorator, such
             as ``sample_table$20190123``.
+        project_id_alternative (Sequence[str]):
+            The alternative field that will be used when ESF is not able
+            to translate the received data to the project_id field.
+        dataset_id_alternative (Sequence[str]):
+            The alternative field that will be used when ESF is not able
+            to translate the received data to the project_id field.
+        table_id_alternative (Sequence[str]):
+            The alternative field that will be used when ESF is not able
+            to translate the received data to the project_id field.
     """
 
-    project_id = proto.Field(proto.STRING, number=1)
-
-    dataset_id = proto.Field(proto.STRING, number=2)
-
-    table_id = proto.Field(proto.STRING, number=3)
+    project_id = proto.Field(
+        proto.STRING,
+        number=1,
+    )
+    dataset_id = proto.Field(
+        proto.STRING,
+        number=2,
+    )
+    table_id = proto.Field(
+        proto.STRING,
+        number=3,
+    )
+    project_id_alternative = proto.RepeatedField(
+        proto.STRING,
+        number=4,
+    )
+    dataset_id_alternative = proto.RepeatedField(
+        proto.STRING,
+        number=5,
+    )
+    table_id_alternative = proto.RepeatedField(
+        proto.STRING,
+        number=6,
+    )
 
 
 __all__ = tuple(sorted(__protobuf__.manifest))

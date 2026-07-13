@@ -15,6 +15,16 @@
 import functools
 
 
+def has_upb():
+    try:
+        from google._upb import _message  # noqa: F401
+
+        has_upb = True
+    except ImportError:
+        has_upb = False
+    return has_upb
+
+
 def cached_property(fx):
     """Make the callable into a cached property.
 

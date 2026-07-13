@@ -35,24 +35,35 @@ class Connection(object):
             A client that uses the faster BigQuery Storage API to fetch rows from
             BigQuery. If not passed, it is created using the same credentials
             as ``client`` (provided that BigQuery Storage dependencies are installed).
-
-            If both clients are available, ``bqstorage_client`` is used for
-            fetching query results.
+        prefer_bqstorage_client (Optional[bool]):
+            Prefer the BigQuery Storage client over the REST client. If Storage
+            client isn't available, fall back to the REST client. Defaults to
+            ``True``.
     """
 
-    def __init__(self, client=None, bqstorage_client=None):
+    def __init__(
+        self,
+        client=None,
+        bqstorage_client=None,
+        prefer_bqstorage_client=True,
+    ):
         if client is None:
             client = bigquery.Client()
             self._owns_client = True
         else:
             self._owns_client = False
 
-        if bqstorage_client is None:
-            # A warning is already raised by the factory if instantiation fails.
-            bqstorage_client = client._create_bqstorage_client()
+        # A warning is already raised by the BQ Storage client factory factory if
+        # instantiation fails, or if the given BQ Storage client instance is outdated.
+        if not prefer_bqstorage_client:
+            bqstorage_client = None
+            self._owns_bqstorage_client = False
+        elif bqstorage_client is None:
+            bqstorage_client = client._ensure_bqstorage_client()
             self._owns_bqstorage_client = bqstorage_client is not None
         else:
             self._owns_bqstorage_client = False
+            bqstorage_client = client._ensure_bqstorage_client(bqstorage_client)
 
         self._client = client
         self._bqstorage_client = bqstorage_client
@@ -76,7 +87,8 @@ class Connection(object):
             self._bqstorage_client._transport.grpc_channel.close()
 
         for cursor_ in self._cursors_created:
-            cursor_.close()
+            if not cursor_._closed:
+                cursor_.close()
 
     def commit(self):
         """No-op, but for consistency raise an error if connection is closed."""
@@ -92,7 +104,7 @@ class Connection(object):
         return new_cursor
 
 
-def connect(client=None, bqstorage_client=None):
+def connect(client=None, bqstorage_client=None, prefer_bqstorage_client=True):
     """Construct a DB-API connection to Google BigQuery.
 
     Args:
@@ -105,11 +117,12 @@ def connect(client=None, bqstorage_client=None):
             A client that uses the faster BigQuery Storage API to fetch rows from
             BigQuery. If not passed, it is created using the same credentials
             as ``client`` (provided that BigQuery Storage dependencies are installed).
-
-            If both clients are available, ``bqstorage_client`` is used for
-            fetching query results.
+        prefer_bqstorage_client (Optional[bool]):
+            Prefer the BigQuery Storage client over the REST client. If Storage
+            client isn't available, fall back to the REST client. Defaults to
+            ``True``.
 
     Returns:
         google.cloud.bigquery.dbapi.Connection: A new DB-API connection to BigQuery.
     """
-    return Connection(client, bqstorage_client)
+    return Connection(client, bqstorage_client, prefer_bqstorage_client)

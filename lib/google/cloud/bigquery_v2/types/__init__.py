@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
-
-# Copyright 2020 Google LLC
+# Copyright 2022 Google LLC
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,36 +13,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-from .encryption_config import EncryptionConfiguration
-from .model_reference import ModelReference
+from .encryption_config import (
+    EncryptionConfiguration,
+)
+from .model import (
+    DeleteModelRequest,
+    GetModelRequest,
+    ListModelsRequest,
+    ListModelsResponse,
+    Model,
+    PatchModelRequest,
+)
+from .model_reference import (
+    ModelReference,
+)
 from .standard_sql import (
     StandardSqlDataType,
     StandardSqlField,
     StandardSqlStructType,
+    StandardSqlTableType,
 )
-from .table_reference import TableReference
-from .model import (
-    Model,
-    GetModelRequest,
-    PatchModelRequest,
-    DeleteModelRequest,
-    ListModelsRequest,
-    ListModelsResponse,
+from .table_reference import (
+    TableReference,
 )
-
 
 __all__ = (
     "EncryptionConfiguration",
+    "DeleteModelRequest",
+    "GetModelRequest",
+    "ListModelsRequest",
+    "ListModelsResponse",
+    "Model",
+    "PatchModelRequest",
     "ModelReference",
     "StandardSqlDataType",
     "StandardSqlField",
     "StandardSqlStructType",
+    "StandardSqlTableType",
     "TableReference",
-    "Model",
-    "GetModelRequest",
-    "PatchModelRequest",
-    "DeleteModelRequest",
-    "ListModelsRequest",
-    "ListModelsResponse",
 )
