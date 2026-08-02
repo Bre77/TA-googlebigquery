@@ -8,7 +8,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - `lib/` is built by `.build.sh` from `lib/requirements.txt` (`python3.9 -m pip install -t lib`),
   not hand-edited. Re-run `.build.sh` after any requirements change; it also applies the hygiene
-  steps below. `lib/splunklib` and `lib/*.dist-info` are gitignored and regenerated each build.
+  steps below. `lib/*.dist-info` is gitignored and regenerated each build; everything else under
+  `lib/`, including vendored packages like `splunk_input_runtime`, is committed to git - unlike
+  most of the fleet's other add-ons, this app does not rely on CI to vendor `lib/` from scratch.
 - **grpc is deliberately dropped.** `google-cloud-bigquery` depends on `google-api-core[grpc]`
   (a hard, non-optional extra as of 3.x), but `bin/bigquery.py` only ever calls the REST query
   path (`client.query().result()`), never bqstorage/grpc - proved by running a real query with
@@ -46,6 +48,35 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python` in `bin/bigquery.py` forces protobuf's
   pure-Python implementation because `google/_upb`'s compiled accelerator is deleted in
   `.build.sh` (same arch-specific-`.so` reasoning as above), not because of old generated code.
+
+## Modular-input runtime and credential handling
+
+- This app runs on `splunk_input_runtime` (https://github.com/Bre77/splunk-input-runtime), not
+  `splunklib`/`splunk-sdk`. `lib/requirements.txt` pins it to an exact commit archive URL with a
+  `sha256:` comment above it (no PyPI release exists yet, so there is no `==version` line to pin
+  against). Bump both the commit and the recorded hash together when the runtime releases a new
+  version; never point at a branch.
+- Credential handling goes through `self.context.credentials.protect_input_fields(...)` in
+  `bin/bigquery.py`, not manual `storage_passwords` list/delete/create calls. This preserves the
+  credential identity `(owner=nobody, app=TA-googlebigquery, realm=<stanza name>,
+  username=service_account)` that existing installs already have - do not change that tuple
+  without a captain-level decision; it strands users' stored service account credentials.
+- The runner (`Script.run_script`) owns `EventWriter.close()`; app code must not call it
+  explicitly. `splunk_input_runtime`'s `close()` is idempotent by design as a defense.
+- `Bre77/SplunkUI-devcontainer`'s `test-harness/credential-continuity-gate.sh` is parameterised
+  (`--app-id`, `--kind`, `--field`, `--old-app`/`--new-app`) - run it with `--app-id
+  TA-googlebigquery --kind bigquery --field service_account` to prove credential continuity
+  across a change to this app's credential handling. The gate's `--field NAME=FWD:REV` spec
+  splits on the first literal colon in the combined string, so a forward-direction (upgrade)
+  test value cannot itself contain a colon; a real GCP service-account JSON blob does (both as
+  JSON syntax and inside its `https://` URLs). Put the colon-bearing, fully realistic secret in
+  the reverse leg and a colon-free but otherwise equally stressful one (real embedded newlines,
+  quotes, backslash escapes, base64 body) in the forward leg to get full character coverage
+  across the two directions of one gate run.
+- `bin/bigquery.py` only writes an indexed event after a real, successful call to the Google
+  BigQuery REST API (`client.query().result()`) - the gate cannot prove `decrypt_proof` for this
+  app without live GCP credentials reachable from the container; run it with
+  `--no-runtime-decrypt-proof <reason>` and disclose that gap rather than hiding it.
 
 ## Maintaining this file
 
