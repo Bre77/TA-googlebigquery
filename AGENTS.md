@@ -66,13 +66,22 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - `Bre77/SplunkUI-devcontainer`'s `test-harness/credential-continuity-gate.sh` is parameterised
   (`--app-id`, `--kind`, `--field`, `--old-app`/`--new-app`) - run it with `--app-id
   TA-googlebigquery --kind bigquery --field service_account` to prove credential continuity
-  across a change to this app's credential handling. The gate's `--field NAME=FWD:REV` spec
-  splits on the first literal colon in the combined string, so a forward-direction (upgrade)
-  test value cannot itself contain a colon; a real GCP service-account JSON blob does (both as
-  JSON syntax and inside its `https://` URLs). Put the colon-bearing, fully realistic secret in
-  the reverse leg and a colon-free but otherwise equally stressful one (real embedded newlines,
-  quotes, backslash escapes, base64 body) in the forward leg to get full character coverage
-  across the two directions of one gate run.
+  across a change to this app's credential handling. Two gate quirks to know before trusting a
+  raw run:
+  - `--field NAME=FWD:REV` splits on the *first* literal colon in the combined string, so the
+    forward-direction (upgrade) test value cannot itself contain a colon; a real GCP
+    service-account JSON blob does (both as `"key": "value"` syntax and inside its `https://`
+    URLs). Put the colon-bearing, fully realistic secret in the reverse leg only.
+  - The gate's `scan_for_secret_leak` passes the whole secret to `grep -rlE` as one PATTERN
+    argument. GNU grep treats a PATTERN containing embedded newline *bytes* as one alternative
+    regex per line (confirmed against grep 3.1 in the harness container) - a genuinely
+    multi-line test secret degenerates into trivial alternatives like a bare `{`, producing a
+    FAIL against nearly every log in the container (verified false: none contained the actual
+    secret). `bin/bigquery.py`'s own scheme documents `service_account` as "a single line of
+    JSON" anyway (real installs paste the key file compacted to one line, PEM newlines as
+    literal `\n` escapes) - so build test secrets as one physical line with no raw newline byte
+    and this doesn't come up. Still use real quotes, backslash-`\n` escapes, base64 body
+    characters, and (reverse leg) colons to exercise the actual hazard.
 - `bin/bigquery.py` only writes an indexed event after a real, successful call to the Google
   BigQuery REST API (`client.query().result()`) - the gate cannot prove `decrypt_proof` for this
   app without live GCP credentials reachable from the container; run it with
