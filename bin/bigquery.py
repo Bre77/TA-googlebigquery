@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lib"))
 from google.cloud import bigquery
 from google.cloud.exceptions import BadRequest
 from google.oauth2.service_account import Credentials
-from splunklib.modularinput import Argument, Event, EventWriter, Scheme, Script
+from splunk_input_runtime.modularinput import Argument, Event, EventWriter, Scheme, Script
 
 
 def fix_types(inputval):
@@ -133,8 +133,6 @@ class Input(Script):
         return scheme
 
     def stream_events(self, inputs, ew):
-        self.service.namespace["app"] = self.APP
-
         # Get Variables
         input_name, input_items = inputs.inputs.popitem()
         kind, name = input_name.split("://")
@@ -152,29 +150,14 @@ class Input(Script):
         blacklist = (input_items.get("blacklist") or "").split(",")
 
         # Password Encryption
-        updates = {}
-
-        for item in ["service_account"]:
-            stored_password = [
-                x
-                for x in self.service.storage_passwords
-                if x.username == item and x.realm == name
-            ]
-            if input_items[item] == self.MASK:
-                if len(stored_password) != 1:
-                    ew.log(
-                        EventWriter.ERROR,
-                        f'stanza="{name}" message="Encrypted {item} was not found for {input_name}, reconfigure its value."',
-                    )
-                    return
-                input_items[item] = stored_password[0].content.clear_password
-            else:
-                if stored_password:
-                    self.service.storage_passwords.delete(username=item, realm=name)
-                self.service.storage_passwords.create(input_items[item], item, name)
-                updates[item] = self.MASK
-        if updates:
-            self.service.inputs.__getitem__((name, kind)).update(**updates)
+        secrets = self.context.credentials.protect_input_fields(
+            kind=kind,
+            stanza=name,
+            values=input_items,
+            fields=("service_account",),
+            placeholder=self.MASK,
+        )
+        input_items["service_account"] = secrets["service_account"]
 
         # Apply Checkpoint
         checkpoint_value = None
@@ -342,8 +325,6 @@ class Input(Script):
                 )
                 with open(checkpointfile, "w") as file:
                     file.write(checkpoint_next)
-
-        ew.close()
 
 
 if __name__ == "__main__":
