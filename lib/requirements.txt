@@ -1,4 +1,6 @@
-splunk-sdk>=2.1.1,<3
+# splunk_input_runtime 1.0.0, pinned to commit fcc942fa00b91b6ca56e35040b26b57cf2189f83.
+# Archive sha256:0977db3c1199c5a8c02f1e3a5e52142a5f87d6969b2902d6d36242eee460ba8d
+splunk_input_runtime @ https://github.com/Bre77/splunk-input-runtime/archive/fcc942fa00b91b6ca56e35040b26b57cf2189f83.zip
 google-cloud-bigquery>=3.41.0,<4
 urllib3>=2.6.3,<3
 google-auth>=2.46.0,<2.48
