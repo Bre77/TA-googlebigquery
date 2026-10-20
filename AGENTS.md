@@ -8,9 +8,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 - `lib/` is built by `.build.sh` from `lib/requirements.txt` (`python3.9 -m pip install -t lib`),
   not hand-edited. Re-run `.build.sh` after any requirements change; it also applies the hygiene
-  steps below. `lib/*.dist-info` is gitignored and regenerated each build; everything else under
-  `lib/`, including vendored packages like `splunk_input_runtime`, is committed to git - unlike
-  most of the fleet's other add-ons, this app does not rely on CI to vendor `lib/` from scratch.
+  steps below. Everything under `lib/` except `lib/requirements.txt` is gitignored build output;
+  CI vendors `lib/` from scratch on every build.
 - **grpc is deliberately dropped.** `google-cloud-bigquery` depends on `google-api-core[grpc]`
   (a hard, non-optional extra as of 3.x), but `bin/bigquery.py` only ever calls the REST query
   path (`client.query().result()`), never bqstorage/grpc - proved by running a real query with
