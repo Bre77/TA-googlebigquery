@@ -4,3 +4,4 @@ splunk_input_runtime @ https://github.com/Bre77/splunk-input-runtime/archive/fcc
 google-cloud-bigquery>=3.41.0,<4
 urllib3>=2.6.3,<3
 google-auth>=2.46.0,<2.48
+certifi>=2026.10.19
