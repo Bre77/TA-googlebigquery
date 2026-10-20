@@ -3,4 +3,6 @@ local.meta
 __pycache__
 *.pyc
 .vscode
-lib/*.dist-info
+# lib/ is build output from .build.sh (pip install -t lib); only its requirements are tracked.
+lib/*
+!lib/requirements.txt
