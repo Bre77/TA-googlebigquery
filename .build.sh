@@ -43,4 +43,4 @@ chmod -R u=rwx,go= bin/*
 REPODIR=$(basename "$PWD")
 cd ..
 COPYFILE_DISABLE=1 tar -cpzf "$OUTPUT" --transform "s,^${REPODIR},${APPID}," \
-    --exclude='*/.*' --exclude=.* --exclude=package.json --exclude='__pycache__' "$REPODIR"
+    --exclude='*/.*' --exclude=.* --exclude=package.json --exclude=AGENTS.md --exclude=CLAUDE.md --exclude='__pycache__' "$REPODIR"
